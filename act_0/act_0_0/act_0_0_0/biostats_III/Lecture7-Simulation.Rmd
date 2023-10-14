@@ -1,0 +1,67 @@
+---
+title: "Lecture7-Simulation"
+author: "Elizabeth Colantuoni"
+date: "2/14/2021"
+header-includes:
+   - \usepackage{undertilde}
+output: pdf_document
+---
+
+In Lecture 6 and 7, we derived the distribution of the least squares solution for $\beta$ under the assumption that the residuals in our MLR model are normally distributed.
+
+Specifically, $\utilde{\hat{\beta}} \sim MVN \left(\utilde{\beta},\sigma^2 (X^\shortmid X)^{-1} \right)$.
+
+Our inferences for $\utilde{\hat{\beta}}$, i.e. generation of confidence intervals or hypothesis testing, are derived based on this normality assumption.
+
+So, what happens if our assumption of Gaussian residuals is violated?
+
+In this exercise, you are going to design a simulation study with the goal of:
+
+1. Confirming that $\utilde{\hat{\beta}}$ are Gaussian when the residuals are Gaussian.
+
+2. For sufficiently large sample sizes, $\utilde{\hat{\beta}}$ will be approximately Gaussian when the residuals are not Gaussian.
+
+# I. Simple simulation
+
+Here is an example simulation study to evaluate the Central Limit Theorem (CLT).  The CLT says that the sample mean based on a simple random sample of size $n$ from any population will be approximately Gaussian given $n$ is sufficiently large.
+
+We can design a simulation study to evaluate this theorem empirically.  The steps of the simulation are as follows:
+
+1. Define a population
+
+2. Define a sample size $n$
+
+3. Take a sample of size $n$ from the population and compute the sample mean.
+
+4. Repeat 3) $K$ times and save the sample means.
+
+5. Compare the distribution of the sample mean to the Gaussian distribution.
+
+Here is one way to conduct the simulation:
+
+```{r samplemean,fig.height=3,fig.width=6,fig.align="center"}
+## Set a random seed 
+## to ensure replication of simulation
+set.seed(8173)
+## Set n
+n = 30
+## Set K
+K = 1000
+## Repeat the following K times
+ybar = NULL
+for(i in 1:K){
+  y = rchisq(n,df=1)
+  ybar = c(ybar,mean(y))
+}
+par(mfrow=c(1,2),mar=c(4,4,1,1))
+hist(ybar, breaks=20, prob=TRUE, 
+     xlab="Sample mean (n=30)", 
+     main="Hist + normal curve")
+curve(dnorm(x, mean=mean(ybar), sd=sqrt(var(ybar))), 
+      col="darkblue", lwd=2, add=TRUE, yaxt="n")
+qqnorm(scale(ybar));abline(0,1)
+```
+
+# II. Simulation: Simple linear regression
+
+Now, work together to design and implement a simulation to evaluate the distribution of $\utilde{\hat{\beta}}$ from a simple linear regression model when the residuals are and are not Gaussian.

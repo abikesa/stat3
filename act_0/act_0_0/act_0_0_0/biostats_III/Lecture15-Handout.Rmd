@@ -1,0 +1,296 @@
+---
+title: "Lecture 15 Handout"
+author: "Elizabeth Colantuoni"
+date: "3/15/2021"
+output: pdf_document
+---
+
+# I. Objectives
+
+Upon completion of this session, you will be able to do the following:
+
+* Describe imputation procedures to account for missing data
+
+* Implement single or multiple imputation approaches using R
+
+# II. Analysis of missing data in Nepali Anthropometry Study
+
+In this section, we will walk through both exploratory analysis of missing data patterns and implemention of missing data imputation approaches within the Nepali Anthropometry Study.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(pacman) # For loading packages
+p_load(splines, geepack, gee, lme4, lmtest, merTools, xtable, broom,reshape2, gridExtra, ggplot2, sandwich, clubSandwich, optimx,
+knitr, kableExtra, dplyr,tidyr,tidyselect,gee,nlme,mice,lattice,DescTools)
+
+options(digits = 3)
+op <- par(no.readonly = TRUE)
+```
+
+## A. What are the patterns of missing data?
+
+In this section, we will open the data and explore the 
+patterns with respect to sex, age, alive, maternal age, breast feeding and weight.
+
+```{r datasetup}
+# load and wrangle data
+load("NepalAnthro.rdata")
+d = nepal.anthro 
+d = d[,c("id","fuvisit","sex","age","alive","mage","bf","wt")]
+d$sex = d$sex - 1
+## Number of missing values for bf: 
+sum(is.na(d$bf))
+## To keep things simple, we will do a mode replacement for bf
+bf.modes = tapply(d$bf,d$fuvisit,Mode,na.rm=T)
+bf.modes
+d$bf[is.na(d$bf)] = 0
+d$bf = as.factor(d$bf)
+## Sort d by follow-up visit and missing wt status
+d = d[order(d$fuvisit,!is.na(d$wt)),]
+```
+
+Note there are 53 missing values for the indicator for breast feeding.  To simplify our missing data analyses, we will replace these values with the mode of the observed breast feeding indicator.
+
+
+The table below displays the missing data patterns with respect to each variable in the analysis dataset.  Note there are 877 rows of data with no missing values and 123 rows of data with missing weight.
+
+```{r missingdatapatterns}
+md.pattern(d)
+```
+
+So far, we have ignored the longitudinal structure of the data, i.e. weight information may be missing periodically over the course of the follow-up or children may have dropped out of the study.
+
+To explore the missing weight information over time, we will reshape the data to a wide format and then look at the missing data patterns.
+
+```{r createwide}
+# Create a wide dataset
+d.wide <- reshape(d,v.names=c("wt","age","bf"),idvar="id",timevar="fuvisit",direction="wide")
+md.pattern(d.wide[,c("wt.0","wt.1","wt.2","wt.3","wt.4")])
+```
+
+What do you notice about the patterns of missing data?  Do the missing data patterns represent drop-out? or intermittent missing data?
+
+## B. What factors correlate with missingness?
+
+First, we create missing data indicators for weight, then we correlate the missing data indicators with 
+available covariates.
+
+```{r createR}
+R.wt = is.na(d$wt)
+```
+
+```{r explorewt,fig.height=2,fig.width=3,echo=FALSE}
+par(mfrow=c(3,2),las=1)
+histogram(~age|R.wt,data=d)
+histogram(~mage|R.wt,data=d)
+histogram(~alive|R.wt,data=d)
+histogram(~sex|R.wt,data=d)
+histogram(~bf|R.wt,data=d)
+histogram(~fuvisit|R.wt,data=d)
+```
+
+What patterns do you notice?  What covariates are related to missing weight?
+
+
+\newpage
+
+## C. Imputation approaches
+
+We will explore several imputation approaches using the mice function in R.
+
+### 1. Single imputation approaches
+
+We will demonstrate the simple mean replacement, predicted mean replacement and single value replacement.
+
+```{r mice}
+## Simple mean replacement
+imp.mean <- mice(d[,-1], method = "mean", m = 1, maxit = 1, print=F)
+## Simple predicted mean replacement
+imp.regmean <- mice(d[,-1], method = "norm.predict", m = 1, maxit = 1, print=F)
+## Single value imputation
+imp.predict <- mice(d[,-1], method = "norm.nob", m = 1, maxit = 1,seed=4321,print=F)
+
+## Check the simple predicted mean replacement 
+fit = lm(wt~sex+age+mage+bf+alive+fuvisit,data=d)
+check.regmean = predict(fit,d)
+check.regmean[!is.na(d$wt)] = d$wt[!is.na(d$wt)]
+
+## Compare imputed values
+my.out20 = as.data.frame(
+cbind(complete(imp.mean)[1:20,],complete(imp.regmean)[1:20,7],check.regmean[1:20],complete(imp.predict)[1:20,7]))
+names(my.out20) = c("fuvisit","sex","age","alive","mage","bf","wt.mean","wt.regmean","wt.confirm","wt.predict")
+my.out20
+```
+\newpage
+
+### 2. Multiple imputation
+
+Next, we will perform a multiple imputation for weight by creating $M = 5$ imputed datasets.  In practice, you typically set $M$ to some large number.
+
+```{r multiplewt0}
+imp.mult = mice(d[,-1],print=F)
+## Print the predictorMatrix
+imp.mult$predictorMatrix
+## Print the complete data for the first 20 obs
+complete(imp.mult,"broad")[1:20,c(1:7,14,21,28,35)]
+```
+
+\newpage
+
+### 4. Changing the prediction models
+
+You can control the "prediction matrix" by telling mice what variables you want to include.  Alternatively, you create your own predictorMatrix (we will do this later in the lab).
+
+```{r predictionmatrix} 
+imp.mult$predictorMatrix
+## Drop parity from prediction model
+new.pMatrix = imp.mult$predictorMatrix
+new.pMatrix[,"alive"] = 0
+imp.mult2 <- mice(d[,-1],predictorMatrix = new.pMatrix,print=F)
+## Or you can select variables based on a minimum level of correlation
+imp.mult3 = mice(d[,-1], pred=quickpred(d[,-1], mincor=.3), print=F)
+imp.mult3$predictorMatrix
+```
+
+### 5. Summaries of the MCMC algorithm
+
+You can look to see the imputed values over the MCMC samples and compare the observed values with imputed values using special "plot" commands.
+
+```{r imputaitonplots,fig.height=6,fig.width=6}
+par(mfrow=c(1,1))
+plot(imp.mult)
+## Increase the length of the mcmc chain
+imp.multlonger = mice(d[,-1],maxit=40,print=F)
+plot(imp.multlonger)
+## Look at strip plot; shows observed and imputed values
+stripplot(imp.mult)
+```
+
+\newpage
+
+### 6. Fitting a model to the imputed data
+
+Here we will compare the results of the analysis conducted on the observed/available data with the results based on the imputed datasets.
+
+```{r fittingmodels}
+fit.obs = lm(wt~ns(age,3)+bf+mage+alive+sex,data=d,na.action=na.omit)
+
+## Fit the same model to each of the impuated datasets
+fit.mean = lm(wt~ns(age,3)+bf+mage+alive+sex,data=complete(imp.mean))
+fit.regmean = lm(wt~ns(age,3)+bf+mage+alive+sex,data=complete(imp.regmean))
+fit.predict = lm(wt~ns(age,3)+bf+mage+alive+sex,data=complete(imp.predict))
+fit.mult = with(imp.mult,lm(wt~ns(age,3)+bf+mage+alive+sex))
+# You can look at the fit for each of the imputed datasets
+#summary(fit$analyses[[1]])
+pool.mult = pool(fit.mult)
+est = as.data.frame(round(cbind(fit.obs$coefficients,
+                          fit.mean$coefficients,
+                          fit.regmean$coefficients,
+                          fit.predict$coefficients,
+                          summary(pool.mult)[,2]),3))
+names(est) = c("obs","mean","regmean","predicted","mult")
+est
+se = as.data.frame(round(cbind(summary(fit.obs)$coefficients[,2],
+              summary(fit.mean)$coefficients[,2],
+              summary(fit.regmean)$coefficients[,2],
+              summary(fit.predict)$coefficients[,2],
+              summary(pool.mult)[,3]),3))
+names(se) = c("obs","mean","regmean","predicted","mult")
+se
+```
+
+\newpage
+
+### 7. Accounting for the longitudinal structure
+
+So far we have ignored the longitudinal structure of the data.  We can incorporate the longitudinal information by doing the imputation on 
+the data in a wide format!
+
+```{r imputewide}
+## Create 10 imputed datasets!
+
+## Create a predictionMatrix for the analysis
+## Variables are: sex, alive, mage, wt.0,age.0,bf.0, 
+## wt.1,age.1,bf.1, wt.2,age.2,bf.2, wt.3,age.3,bf.3,
+## wt.4,age.4,bf.4
+##
+## Initialize the matrix
+predM = matrix(1,nrow=18,ncol=18)
+for(i in 1:18) predM[i,i] = 0
+## wt.0 will be predicted by 
+v0 = c("sex","alive","mage","age.0","bf.0")
+## wt.1 will be predicted by 
+v1 = c("sex","alive","mage","wt.0","bf.0","age.1","bf.1")
+## wt.2 will be predicted by 
+v2 = c("sex","alive","mage","wt.1","bf.1","age.2","bf.2")
+## wt.3 will be predicted by 
+v3 = c("sex","alive","mage","wt.2","bf.2","age.3","bf.3")
+## wt.4 will be predicted by 
+v4 = c("sex","alive","mage","wt.3","bf.3","age.4","bf.4")
+names(d.wide)
+# Define the model for wt.0, wt.1, wt.2, wt.3, wt.4
+predM[4,] = ifelse(!is.na(match(names(d.wide)[-1],v0)),1,0)
+predM[7,] = ifelse(!is.na(match(names(d.wide)[-1],v1)),1,0)
+predM[10,] = ifelse(!is.na(match(names(d.wide)[-1],v2)),1,0)
+predM[13,] = ifelse(!is.na(match(names(d.wide)[-1],v3)),1,0)
+predM[16,] = ifelse(!is.na(match(names(d.wide)[-1],v4)),1,0)
+row.names(predM) = names(d.wide)[-1]
+colnames(predM) = names(d.wide)[-1]
+## Conduct the multiple imputation
+wide.imp = mice(d.wide[,-1],predictorMatrix=predM,print=F,m=10)
+wide.imp$loggedEvents
+
+## Once we have the imputed dataset, 
+## we can look at the imputed values
+## For instance, look at the set of imputed
+## values for wt.0
+wide.imp$imp$wt.0
+
+## Reconfigure each dataset back into long format
+## First create a list of the completed wide datasets
+id = 1:nrow(d.wide)
+all.imp.data <- as.list(1:10)
+for (i in 1:10){
+    all.imp.data[[i]] <- cbind(id,complete(wide.imp,action=i))
+}
+
+## Then reconfigure each data set and add a fuvisit variable
+long.imp.data2 <- lapply(all.imp.data,reshape,varying=5:19,idvar="id",
+                         timevar="fuvisit",times=0:4,direction="long")
+
+long.imp.data2 <- lapply(long.imp.data2,FUN=function(u){ u[order(u$id,d$fuvisit),]})
+
+## Run the a random intercept + slope for age model
+## on each dataset
+long.imp.re <- lapply(long.imp.data2, FUN=function(u){
+  u$agec = u$age-6
+  u$agesp24 = ifelse(u$age>24,u$age-24,0)
+  u$agesp48 = ifelse(u$age>48,u$age-48,0)
+  lmer(wt ~ agec+agesp24+agesp48 + (1+age|id),data=u,
+       control = lmerControl(optimizer ="Nelder_Mead"))
+  })
+
+## Save the set of regression coefficients and 
+## variance covariance matrices
+hyper.imp.parms <- lapply(long.imp.re,fixed.effects)
+hyper.imp.vcov <- lapply(long.imp.re,FUN=function(u) as.matrix(vcov(u)))
+
+## Average the estimates
+my.est = matrix(unlist(hyper.imp.parms),ncol=4,byrow=T)
+rubin.est = apply(my.est,2,mean)
+rubin.var = apply(array(unlist(hyper.imp.vcov),c(4,4,5)),1:2,mean) + (1+1/10)*cov(my.est)
+
+## Fit the the model to the available data
+d$agec = d$age - 6
+d$agesp24 = ifelse(d$age>24,d$age-24,0)
+d$agesp48 = ifelse(d$age>48,d$age-48,0)
+fit.available = lmer(wt ~ agec+agesp24+agesp48 + (1+age|id),data=d,
+control=lmerControl(optimizer ="Nelder_Mead"))
+
+my.out = as.data.frame(cbind(fixed.effects(fit.available),
+                        sqrt(diag(vcov(fit.available))),
+                          rubin.est,sqrt(diag(rubin.var))))
+names(my.out) = c("est.avail","se.avail","est.imp","se.imp")
+my.out
+```
+

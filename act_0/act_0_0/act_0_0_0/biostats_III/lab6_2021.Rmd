@@ -1,0 +1,187 @@
+---
+title: "140.653 Lab 6"
+author: "Erjia Cui & Elizabeth Colantuoni"
+output: html_document
+---
+
+```{r,message=FALSE,warning=FALSE}
+library(ggplot2)
+library(MASS)
+library(tidyverse)
+library(matrixcalc)
+library(nlme)
+```
+
+For this lab, we will simulate longitudinal dataset with specific correlation structure. Then we will fit the dataset using both Generalized Least Squares (GLS) and Ordinary Least Squares (OLS) with the goal of understanding the impact of ignoring correlation in the data on the estimated regression coefficients and inferences we would make from the analysis.
+
+## Load and Organize the Real Data
+
+We select the first 60 children from Nepal Children Dataset and create the spline term. Then we specify the true coefficients to simulate linear predictors of each visit of each child.
+
+```{r}
+## load data
+load("../nepal.anthro.rdata")
+nepal <- nepal.anthro[nepal.anthro$id %in% unique(nepal.anthro$id)[1:60],]
+nepal <- nepal[order(nepal$id,nepal$fuvisit),]
+nepal <- nepal %>% dplyr::select(id, age, num, fuvisit)
+rm(nepal.anthro)
+
+## create the spline term
+nepal$age_sp6 <- ifelse(nepal$age > 6, nepal$age - 6, 0)
+
+## specify the true coefficient of each term
+b0 = 5
+b1 = 0.5
+b2 = -0.35
+
+## simulate linear predictors
+eta <- b0 + b1*nepal$age + b2*nepal$age_sp6
+```
+
+## Simulate Residuals with Specified Correlation Structure
+
+In the previous lab we introduced typical working correlation structures. We next simulate residuals with specified exchangable correlation structure. As an exercise, you could try to simulate data with other specified correlation structures such as AR(1). After simulating the residuals, we combine it with the simulated linear predictors to obtain the simulated outcomes.
+
+```{r}
+I <- length(unique(nepal$id)) ## number of subjects
+n <- nrow(nepal) ## total number of visits
+J <- n / I ## number of visits per subject
+
+set.seed(22)
+## Exchangable structure
+sigma_exch <- matrix(0.8, nrow = J, ncol = J)
+diag(sigma_exch) <- 1
+is.positive.definite(sigma_exch)
+Sigma_exch <- kronecker(diag(I), sigma_exch)
+
+res_exch <- mvrnorm(1, mu = rep(0, n), Sigma = Sigma_exch)
+Y_exch <- eta + res_exch
+nepal$Y_exch <- Y_exch
+
+# ## Unstructured structure
+# sigma <- matrix(rnorm(J*J, 0.2, 0.2), nrow = J, ncol = J)
+# sigma_unst <- t(sigma) %*% sigma
+# diag(sigma_unst) <- 1
+# is.positive.definite(sigma_unst) ## check if specified covariance matrix is positive definite
+# Sigma_unst <- kronecker(diag(I), sigma_unst)
+# 
+# res_unst <- mvrnorm(1, mu = rep(0, n), Sigma = Sigma_unst)
+# Y_unst <- eta + res_unst
+# nepal$Y_unst <- Y_unst
+
+str(nepal)
+```
+
+## Exploratory Plots
+
+```{r}
+## spaghetti plots
+ggplot(data = nepal, aes(x = age, y = Y_exch, group = factor(id))) +
+  theme_bw() +
+  geom_line() +
+  labs(y = "Y (exchangable)")
+```
+
+## Fit the Model Using GLS and OLS
+
+After simulating the longitudinal dataset, we next fit both generalized least squares (GLS) which accounts for the correlation structure, and OLS which simply ignores the correlations within subject and assumes independence. 
+
+When fitting a GLS, `corCompSymm` gives the exchangeable correlation structure; `corSymm` gives unstructured correlation structure.
+
+### 1. Results from One Simulation
+
+We use `Y_exch`, the simulated outcome from exchangable correlation structures to fit the models. For GLS we use both exchangable and unstructured structure to fit the model. In this case, both correlation structure are theoretically correct.
+
+```{r}
+## GLS with exchangable structure
+fit_exchdat_exchmod <- gls(Y_exch ~ age + age_sp6, data = nepal, correlation=corCompSymm(form=~1|id))
+summary(fit_exchdat_exchmod)
+
+## GLS with unstructured structure
+fit_exchdat_unstmod <- gls(Y_exch ~ age + age_sp6, data = nepal, correlation=corSymm(form=~1|id))
+summary(fit_exchdat_unstmod)
+
+## OLS
+fit_exchdat_ols <- lm(Y_exch ~ age + age_sp6, data = nepal)
+summary(fit_exchdat_ols)
+```
+
+Comparing the variance estimates from different models, OLS has larger estimated standard error of coefficients then both GLS models. These should not be surprised since OLS overestimates the variance by ignoring the correlations between visits within each subject. We next compare their AIC.
+
+```{r}
+AIC(fit_exchdat_exchmod)
+AIC(fit_exchdat_unstmod)
+AIC(fit_exchdat_ols)
+```
+
+Even if both exchangable and unstructured models are correct, we still observe a slightly smaller AIC from exchangable model. This is very common in practice since specifying an unstructured correlation will increase the number of estimated parameters and add the complexity of the model. Although it is the most general correlation structure, it does not necessarily always give the best performance. If the correlation satisfies a simple structure well, a simple model will sometimes have better performance.
+
+### 2. Results from Multiple Simulations
+
+We next run the simulation 500 times, simulating exchangable longitudinal dataset one at a time. For each simulation, we extract the estimated coefficients from both GLS (exchangable) and OLS and plot their distributions.
+
+```{r}
+nsim <- 500
+
+## create variables to store simulation results
+coef_exchmod <- coef_ols <- matrix(NA, nrow = nsim, ncol = 3)
+
+for(i in 1:nsim){
+  res_exch <- mvrnorm(1, mu = rep(0, n), Sigma = Sigma_exch)
+  Y_exch <- eta + res_exch
+  nepal$Y_exch <- Y_exch
+  
+  ## GLS with exchangable structure
+  fit_exchdat_exchmod <- gls(Y_exch ~ age + age_sp6, data = nepal, correlation=corCompSymm(form=~1|id))
+  coef_exchmod[i,] <- coef(fit_exchdat_exchmod)
+
+  ## OLS
+  fit_exchdat_ols <- lm(Y_exch ~ age + age_sp6, data = nepal)
+  coef_ols[i,] <- coef(fit_exchdat_ols)
+}
+
+apply(coef_exchmod, 2, sd)
+apply(coef_ols, 2, sd)
+
+## organize simulation results to make a plot
+data_plot <- data.frame(est = c(coef_ols[,2], coef_exchmod[,2]),
+                        model = c(rep("OLS", nsim), rep("GLS", nsim)))
+data_plot$model <- factor(data_plot$model, levels = c("OLS", "GLS"))
+ggplot(data_plot) +
+  geom_histogram(aes(x = est, fill = model), alpha = 0.5, bins = 20, position = 'identity')
+
+```
+
+What do you observe?
+
+
+</br></br></br></br></br>
+
+
+Some ideas on why we see a reduced standard error using GLS. We are interested in estimating **changes** in the mean outcome over time, and we have correlated measurements over time within a subject. Assume $y_1$ is the first observation and $y_2$ is the second observation. The estimand $Var(y_2 - y_1) = Var(y_1) + Var(y_2) - 2Cov(y_1, y_2)$. In the OLS model we simply assume $Cov(y_1, y_2) = 0$.
+
+
+
+<!-- ## Exercise -->
+
+<!-- Fit the model Using GLS and OLS on unstructured longitudinal dataset and compare the results. -->
+
+<!-- ```{r} -->
+<!-- ## GLS with exchangable structure -->
+<!-- fit_unstdat_exchmod <- gls(Y_unst ~ age + age_sp6, data = nepal, correlation=corCompSymm(form=~1|id)) -->
+<!-- summary(fit_unstdat_exchmod) -->
+
+<!-- ## GLS with unstructured structure -->
+<!-- fit_unstdat_unstmod <- gls(Y_unst ~ age + age_sp6, data = nepal, correlation=corSymm(form=~1|id)) -->
+<!-- summary(fit_unstdat_unstmod) -->
+
+<!-- ## OLS -->
+<!-- fit_unstdat_ols <- lm(Y_unst ~ age + age_sp6, data = nepal) -->
+<!-- summary(fit_unstdat_ols) -->
+
+<!-- AIC(fit_unstdat_exchmod) -->
+<!-- AIC(fit_unstdat_unstmod) -->
+<!-- AIC(fit_unstdat_ols) -->
+<!-- ``` -->
+
+

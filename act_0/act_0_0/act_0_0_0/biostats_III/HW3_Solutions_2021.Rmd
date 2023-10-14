@@ -1,0 +1,367 @@
+---
+title: "Homework 3 Solution"
+output: 
+  pdf_document:
+    keep_tex: true
+header-includes:
+    - \usepackage{mathrsfs}
+    - \usepackage{amsfonts}
+---
+
+```{r load packages, warning=FALSE, message=FALSE}
+knitr::opts_chunk$set(warning = FALSE)
+library(nlme)
+library(tidyverse)
+library(gee)
+library(lmtest)
+library(splines)
+library(ggplot2)
+library(gridExtra)
+library(dplyr)
+
+options(digits = 3)
+```
+
+# Part I. Get familiar with the data
+
+```{r}
+load("NepalAnthro.rdata")
+d1 = nepal.anthro[,c("id", "alive", "age", "wt","fuvisit")]
+d1$parity = factor(ifelse(d1$alive <= 4, 0, 1), 
+            levels = 0 : 1, 
+            labels = c("1 to 4 live births",
+                       "5 or more live births"))
+d2 = d1[complete.cases(d1),]
+```
+
+## A. Mother's Parity 
+
+Make a table of mother’s parity (alive variable). Ideally, we would compare children of nulliparous women to categories of women of parity > 0. However, in this dataset, there are only 19 children from nulliparous women. So, we will create two categories of women: parity $le$ 3 (i.e. 1 to 4 live births) vs. parity $>$ 3 (5 or more live births). 
+
+```{r}
+## Table for alive
+table(d2 %>% 
+  group_by(id) %>% 
+  summarise(alive = alive[1]) %>% 
+  select(alive))
+
+## Table for parity
+table(d2 %>% 
+  group_by(id) %>% 
+  summarise(parity = parity[1]) %>% 
+  select(parity))
+```
+
+## B. Spaghetti plot 
+
+Make a spaghetti plot of children’s weight as a function of age; connecting the measured weights within a child over time. Color code the data by parity group. Add smoothing splines for each parity group. Note any similarities or differences in the growth rates across the two parity groups.
+
+```{r part 1.1,fig.height=5,fig.width=5,fig.align="center"}
+# load and wrangle data
+d2 %>% 
+  ggplot(aes(x = age, y = wt, col = parity)) +
+  geom_line(aes(group = id)) + 
+  labs(x="Age (in months)",y="Weight (in kg)") +
+  scale_y_continuous(breaks=seq(2,16,2),limits=c(2,16)) +
+  scale_x_continuous(breaks=seq(0,60,6),limits=c(0,60))+
+  theme_bw()+
+  theme(legend.position="bottom",legend.box="horizontal")+ geom_smooth()
+```
+
+The average weight as a function of age looks roughly similar across the two parity groups.  In addition, the growth rate for weight changes over the course of age (similar to our findings in prior analyses of these data).
+
+# Part II. Model checking and recommendations
+
+## 1. Model checking
+
+Conduct appropriate checking of this model; i.e. check for appropriateness of the mean model, and the independence and constant variance assumptions for the residuals.
+```{r,slr}
+lm = lm(wt ~ age * parity, data = d2)
+```
+
+We first assess the appropriateness of the mean function
+```{r,fig.align="center",fig.height=2.5,fig.width=5}
+## Test age against residuals
+tibble(age = d2$age, residual = residuals(lm)) %>% 
+  ggplot(aes(x = age, y = residual)) + 
+  geom_jitter(alpha = 0.7) +
+  geom_smooth() + theme_bw() + 
+  geom_hline(yintercept = 0, color = "red") + 
+  labs(y = "Residuals: linera age")
+  
+## Test predicted weight against residuals
+tibble(predict_wt = predict(lm), residual = residuals(lm)) %>% 
+  ggplot(aes(x = predict_wt, y = residual)) + 
+  geom_jitter(alpha = 0.7) +
+  geom_smooth() + theme_bw() + 
+  geom_hline(yintercept = 0, color = "red") + 
+  labs(y = "Residuals: linera age")
+```
+
+Based on the plots comparing the estimated residuals vs. age and residuals vs. predicted weight, we observe that the model assuming average weight changes linearly with age underestimates weight for ages < 20 months, overestimates weight for ages between roughly 20 to 60 months and underestimates weight for ages > 60 months.  Assuming that the average weight is a linear function of age is not supported by the data; we should add some non-linearity to the average weight / age relationship.
+
+Next, we test the independence assumption
+```{r}
+nep.wide <- d2 %>% 
+  mutate(residual = residuals(lm)) %>%
+  select("id", "residual", "fuvisit") %>%
+  spread(fuvisit, residual)
+
+## Use pairwise complete observations
+nep.wide %>% 
+  select("0","1","2","3","4") %>%
+  cor(use = "pairwise.complete.obs")
+
+## Use complete observations
+nep.wide %>% 
+  select("0","1","2","3","4") %>%
+  cor(use = "complete.obs")
+```
+Based on the correlations between residuals from the same child but at different assessments, the residuals are highly correlated with each other when the assessments are 4 months apart and the correlation decays as the time between assessments increases.  Therefore, this is evidence that the independence assumption does not hold. In fact, we anticipated some correlation in the data based on the data collection process.
+ 
+Finally we check the constant variance assumption:
+```{r,fig.align="center",fig.width=5,fig.height=2.5}
+## Test age against residuals
+tibble(age = d2$age, residual = residuals(lm)^2) %>% 
+  ggplot(aes(x = age, y = residual)) + 
+  geom_jitter(alpha = 0.7) +
+  geom_smooth() + theme_bw() + 
+  geom_hline(yintercept = 0, color = "red") + 
+  labs(y = "Squared residuals")
+```
+The plot of the squared residuals vs. age shows that the variance (mean of the squared residuals) increases starting at ages > 30 months. 
+
+
+## 2. Alternative model
+
+Based on your model checking, propose an alternative model for the data that can address the first goal of the analysis (i.e. determine if the growth rates of children differ by mother’s parity (number of previous live births) while satisfying the observed patterns in data with respect to the mean model and distribution of residuals. NOTE: If you modify the mean model, you may want to iterate between model checking for the mean.
+
+Here, we fit a natural cubic spline regression model,
+$$
+E(Y_{ij}|age_{ij}, parity_{i}) = B_0 + B_{ns,0}\cdot ns(age_{ij},3) + B_1 \cdot parity + B_{ns, 1}\cdot ns(age_{ij}, 3)\cdot parity_{i}
+$$
+Then we have $Y_i\sim MVN(\mu_i, V_i)$ where the diagonal elements of $V_i$ are $Var(Y_{ij}) = \sigma^2_{ij}$, where $\sigma^2_{ij} = f(age_ij)$ and $Corr(Y_{ij},Y_{ik}) = \rho^{|j-k|}$.
+
+Below we confirm that this more flexible mean model has mean zero residuals as a function of age and the predicted weights.
+```{r,fig.align="center",fig.height=2.5,fig.width=5}
+lm2 = lm(wt ~ ns(age, 3) * parity, data = d2)
+d2$predicted_wt = lm2$fitted.values
+
+## Test age against residuals
+tibble(age = d2$age, residual = residuals(lm2)) %>% 
+  ggplot(aes(x = age, y = residual)) + 
+  geom_jitter(alpha = 0.7) +
+  geom_smooth() + theme_bw() + 
+  geom_hline(yintercept = 0, color = "red") + 
+  labs(y = "Residuals: linera age")
+  
+## Test predicted weight against residuals
+tibble(predict_wt = predict(lm2), residual = residuals(lm2)) %>% 
+  ggplot(aes(x = predict_wt, y = residual)) + 
+  geom_jitter(alpha = 0.7) +
+  geom_smooth() + theme_bw() + 
+  geom_hline(yintercept = 0, color = "red") + 
+  labs(y = "Residuals: linera age")
+```
+ 
+# Part III: Marginal model for longitudinal data
+
+## 1. Fit the model
+
+Use the gls function in R to fit the model you proposed in Part II.
+
+```{r}
+## Fit a full model
+gls_full <- gls(wt ~ ns(age, 3) * parity, data = d2, corAR1(, form =  ~fuvisit | id ), weights = varFunc(~age))
+summary(gls_full)
+```
+
+## 2. Likelihood Ratio Test
+
+Conduct a likelihood ratio test to address the first goal of the analysis; i.e. to determine if the growth rates of children differ by mother’s parity (number of previous live births).
+
+To test whether the growth rates of weight differ by parity group, you want to compare the model with a) main terms for age, main term for parity and interaction of age terms with parity to a model with b) main terms for age and a main term for parity. So that the following model needs to be fitted
+
+```{r}
+## Fit a reduced model
+gls_reduced <- gls(wt ~ ns(age, 3) + parity, data = d2, corAR1(, form =  ~fuvisit | id ), weights = varFunc(~age))
+summary(gls_reduced)
+
+## Likelihood ratio test
+lrtest(gls_reduced, gls_full)
+```
+
+The likelihood ratio test returns a p-value of 0.11, which indicates that the data do not support rejecting the null hypothesis; i.e. there is no evidence in the data suggesting that the growth rates of weight differ by mother’s parity. 
+
+## 3. Additional models
+
+In addition, fit the mean model you proposed in Part II using the gee function but where you allow the correlation structure to be: independence, exchangeable and unstructured. Note similarities and differences in the "naive" (model) and "robust" standard error estimates. Compare the estimated coefficients/standard errors from the gls fit to those obtained using gee.
+
+```{r,geemodels}
+## GEE under independent condition
+gee_independence <- suppressMessages(gee(wt ~ ns(age, 3) * parity, data = d2, id = id, corstr = "independence"))
+
+## GEE under exchangealbe condition
+gee_exchangeable <- suppressMessages(gee(wt ~ ns(age, 3) * parity, data = d2, id = id, corstr = "exchangeable"))
+
+## GEE under unstructed condition
+gee_unstructured <- suppressMessages(gee(wt ~ ns(age, 3) * parity, data = d2, id = id, corstr = "unstructured"))
+```
+
+Based on the results from the GEE models, we observe that the “robust” standard error estimates are smaller than the “naive” (or model-based) estimates. Also, when comparing the standard error estimates from the GEE approaches to the GLS, the robust standard errors obtained from GEE are smaller than the estimates from the GLS approach.  
+
+```{r}
+## Table to compare coefficients for different fitting strategies
+coefficient_output = cbind(gee_independence$coefficients, gee_exchangeable$coefficients, gee_unstructured$coefficients, gls_full$coefficients) %>% as.data.frame
+names(coefficient_output) = c("coeff_gee_independence", "coeff_gee_exchangeable", "coeff_gee_unstructured", "coeff_gls_full")
+rownames(coefficient_output) = c("intercept", "ns1", "ns2", "ns3", "parity", "ns1:parity", "ns2:parity", "ns3：parity")
+print(coefficient_output)
+
+## Table to compare naive SE for different fitting strategies
+naive_se_output = cbind(sqrt(diag(gee_independence$naive.variance)), sqrt(diag(gee_exchangeable$naive.variance)), sqrt(diag(gee_unstructured$naive.variance)), sqrt(diag(gls_full$varBeta))) %>% as.data.frame
+names(naive_se_output) = c("naive_se_gee_independence", "naive_se_gee_exchangeable", "naive_se_gee_unstructured", "naive_se_gls_full")
+rownames(naive_se_output) = c("intercept", "ns1", "ns2", "ns3", "parity", "ns1_parity", "ns2_parity", "ns3_parity")
+print(naive_se_output)
+
+## Table to compute robust SE for different fitting strategies
+robust_se_output = cbind(sqrt(diag(gee_independence$robust.variance)), sqrt(diag(gee_exchangeable$robust.variance)), sqrt(diag(gee_unstructured$robust.variance)),sqrt(diag(gls_full$varBeta))) %>% as.data.frame
+names(robust_se_output) = c("robust_gee_independence", "robust_gee_exchangeable", "robust_gee_unstructured", "naive_se_gls_full")
+rownames(robust_se_output) = c("intercept", "ns1", "ns2", "ns3", "parity", "ns1_parity", "ns2_parity", "ns3_parity")
+print(robust_se_output)
+```
+
+# Part IV: Linear mixed model
+
+# 1. Fit two linear mixed models.
+
+Fit the following two models using the lme function in R.
+
+```{r}
+d2$age_6 = d2$age - 6
+d2$age_24_plus = ifelse(d2$age>24,d2$age-24,0)
+d2$age_48_plus = ifelse(d2$age>48,d2$age-48,0)
+## Random Intercept Model:
+lme_intercept = lme(wt ~ 1 + age_6 + age_24_plus +
+                      age_48_plus + parity +
+                      parity:age_6 + parity:age_24_plus +
+                      parity:age_48_plus, random = ~1|id, data = d2)
+summary(lme_intercept)
+```
+
+```{r}
+## Random Intercept and Random Slope for Age Model
+lme_intercept_slope = lme(wt ~ 1 + age_6 + age_24_plus +
+                            age_48_plus + parity + parity:age_6 + 
+                            parity:age_24_plus +
+      parity:age_48_plus, 
+      random = ~1 + age_6|id, data = d2)
+summary(lme_intercept_slope)
+```
+
+# 2. Model interpretation: Random intercept model
+
+Interpret the random intercept variance from the Random Intercept Model.
+
+The intercept $\beta_0$ in this model is the population average weight of 6-month old children born to mothers with parity 0 to 3; $\beta_0 + \beta_4$ represents the population average weight of 6-month old children born to mothers with parity > 3. The random intercept variance represents an estimate of the variance in 6-month old children’s expected weights. 
+
+The estimated random intercept standard deviation is 1.34 and the estimated population average weight for 6-month olds born to mothers with parity 0 to 3 and > 3 is 6.41 and `r 6.41+0.16` kg, respectively. Therefore, we expect that 95\% of 6-month old children born to mothers with parity 0 to 3 and > 3 will have weights within [`r 6.41 -  1.96 * 1.34`, `r 6.41 +  1.96 * 1.34`]  and [`r (6.27 + 0.12) - 1.96 * 1.34`,`r (6.27 + 0.12) + 1.96 * 1.34`]  kg, respectively.
+
+# 3. Model Interpretation: Random intercept and slope for age model
+
+Interpret the random intercept and random slope for age variance from the Random Intercept and Random Slope for Age Model.
+
+The random slope variance is an estimate of variation in growth rates compared to the population average growth rate. The random slope for age standard deviation is $0.03$. The population average monthly growth rate in the first 24 months of life is 0.16 kg per month for children born to mothers with parity 0 to 3 and `r 0.16 + 0.01` kg per month for children born to mothers with parity > 3. So we expect that the growth rate in the first 24 months of life will vary from child to child and estimate that 95\% of children born to mothers with parity 0 to 3 or > 3 will have growth rates between [`r 0.16 - 1.96 * 0.03`,`r 0.16 + 1.96 * 0.03`] or [`r 0.16  + 0.01- 1.96 * 0.03`,`r 0.16 + 0.01 + 1.96 * 0.03`]
+
+# 4. Estimates of variance in weights
+
+Using the fit of the Random Intercept and Random Slope for Age Model, estimate the variance in weights of children at 6-months, 12-months and 36-months, from the parity $le$ 3 group. 
+
+To compute the variance in weights of children at different ages, take variance on both sides of the mixed linear models, we have 
+
+\begin{center}
+\begin{tabular}{rcl}
+$Var(Y_{ij} | age_{ij}, parity_i = 0)$ & = & $var(u_{0i} + u_{1i}(age_{ij}-6) + \epsilon_{ij})$ \\
+& & \\
+& = & $var(u_{0i}) + (age_{ij}-6)^2var(u_{1i}) + 2 \times (age_{ij}-6) \times cov(u_{0i}, u_{1i}) + var(\epsilon_{ij})$ \\
+\end{tabular}
+\end{center}
+
+Plug in the estimated variance for $u_{0i}$ ($\hat{\tau}^2_0 = 1.11^2$) and $u_{1i}$ ($\hat{\tau}^2_1 = 0.031^2$), covariance for $u_{0i}$ and $u_{1i}$ ($\hat{\tau}_{01} = -0.27 \times 1.11 \times 0.031$) and variance for $\epsilon_{ij}$ ($\hat{\sigma}^2  = 0.38^2$).
+
+For childeren at 6-months, the variance in weights of children is $1.11^2 + 0.031^2 * (6-6)^2 + 2 * (6-6) * (-0.27) * 1.11 * 0.031 + 0.38^2$ = `r 1.11^2 + 0.031^2 * (6-6)^2 + 2 * (6-6) * (-0.27) * 1.11 * 0.031 + 0.38^2`.
+
+For childeren at 12-months, the variance in weights of children is $1.11^2 + 0.031^2 * (12-6)^2 + 2 * (12 - 6) * (-0.27) * 1.11 * 0.031 + 0.38^2$ = `r 1.11^2 + 0.031^2 * (12-6)^2 + 2 * (12 - 6) * (-0.27) * 1.11 * 0.031 + 0.38^2`.
+ 
+For childeren at 36-months, the variance in weights of children is $1.11^2 + 0.031^2 * (36-6)^2 + 2 * (36-6) * (-0.27) * 1.11 * 0.031 + 0.38^2=$ `r 1.11^2 + 0.031^2 * (36-6)^2 + 2 * (36-6) * (-0.27) * 1.11 * 0.031 + 0.38^2`.
+
+# 5. Observed vs. fitted
+
+Obtain the fitted values from the model and make a plot with 3 panels comparing the observed data (spaghetti plot) and the fitted values from both the Random Intercept and Random Intercept and Random Slope for Age Models (i.e. spaghetti plots of fitted values). Comment on which of the two linear mixed models you think is most consistent with the data.
+
+```{r}
+## Fitted values from the random intercept model
+d2$predict_int = lme_intercept$fitted[,2]
+d2$predict_intslope = lme_intercept_slope$fitted[,2]
+
+plot.int = ggplot(d2) + geom_line(aes(x = age, y = predict_int,group = id,col=parity)) + 
+  xlab("Age (month)") + 
+  ylab("Weight (kg)") +
+  theme(legend.position='bottom', legend.box='horizontal') + 
+  ggtitle("RI")
+
+## Fitted values from the Random Intercept and Random Slope for Age Model
+plot.intslope = ggplot(d2) + geom_line(aes(x = age, y = predict_intslope,group = id,col=parity)) + 
+  xlab("Age (month)") + 
+  ylab("Weight (kg)") +
+  theme(legend.position='bottom', legend.box='horizontal') + 
+  ggtitle("RI + Slope")
+
+plot.obs = ggplot(d2) + geom_line(aes(x = age, y = wt, col = parity,group = id)) + 
+  xlab("Age (month)") + 
+  ylab("Weight (kg)") +
+  theme(legend.position='bottom', legend.box='horizontal') + 
+  ggtitle("Obs")
+
+grid.arrange(plot.obs, plot.int, plot.intslope, nrow = 1)
+```
+
+When comparing the fit of the two random effects models, the Random Intercept and Random Slope for Age Model is more consistent with the data.  Note that the Random Intercept and Random Slope for Age Model does a better job mimicking the features of the data; that is, variation in growth rates.  Whereas, the Random Intercept model assumes that the rate of growth may vary by parity group but across children from the same parity group, the growth rates are the same.  
+
+# Part V: Summarize your findings
+
+##### Objectives:  
+
+Using data generated from a longitudinal study of Nepalese children aged 1 to 60 months of age, we determined if the growth rates of children differed by mother's parity (number of previous live births) and estimated the population variation in weights of 6-month old Nepalese children and the population variation in annual growth rates of children.
+
+#### Methods:  
+
+We fit a weighted least squares model where the mean weight was modeled as a smooth function of age (natural cubic spline with 3 degrees of freedom) separately for children of mothers with parity 0 to 3 vs. greater than 3, the variance in weights was allowed to vary as a function of age (linear on the log variance scale) and the correlation between weights from the same child followed a first order autoregressive model. To estimate the heterogeneity of children’s weights at 6-months of age and heterogeneity in annual growth rates, we fit a random effects model that allowed the mean weight to change as a linear spline model for age (with knots at 24 and 48 months), separately for each parity group with a random intercept and random slope for age (linear term) defined for each child.
+
+
+#### Results
+```{r figure1,fig.height=5,fig.width=5,fig.align="center",echo=FALSE}
+# load and wrangle data
+ggplot(d2,aes(x = age, y = wt, col = parity)) + 
+  geom_point(size=0.25) + 
+  geom_line(aes(x=age,y=predicted_wt)) + 
+  labs(x="Age (in months)",y="Weight (in kg)") +
+  scale_y_continuous(breaks=seq(2,16,2),limits=c(2,16)) +
+  scale_x_continuous(breaks=seq(0,60,6),limits=c(0,60))+
+  theme_bw()+
+  theme(legend.position="bottom",legend.box="horizontal")
+```
+
+Figure 1 displays the observed and estimated mean weight as a function of age, separately for each parity group based on the weighted least squares model. We found no evidence in the data to suggest that the growth rate of weight differed by parity group (likelihood ratio test p-value 0.11).
+
+From the random effects model, we estimated the population average weight of 6-month old Nepali children is 6.42 kg and `r 6.42 + 0.06` kg among children born to mothers with parity 0 to 3 and > 3, respectively.  The random effects model estimated the standard deviation in expected weights for 6-month olds (SD = 1.34 kg) such that we anticipate that 95\% of 6-month old Nepali children will have weights ranging from [`r 6.42 - 1.96 * 1.34`, `r 6.42 + 1.96 * 1.34`] and [`r 6.42 + 0.06 - 1.96 * 1.34`, `r 6.42 + 0.06 + 1.96 * 1.34`] among children born to mothers with parity 0 to 3 and > 3, respectively.
+
+We estimated that annual growth rates will vary from child to child (estimated variance in annual growth rates is `r 12^2 * 0.0311^2` and standard deviation `r sqrt(12^2 * 0.0311^2)`). 
+
+For example, among children born to mothers with parity 0 to 3, we estimate that the annual growth rate for ages 0 to 24 months, 24 to 48 months and > 48 months is `r 0.16 * 12` kg, `r 12 *(0.16 - 0.03) ` kg and `r 12 * (0.16- 0.03 - 0.03)` kg, respectively, and that 95\% of children's annual growth rates will fall within [`r 0.16 * 12 - 1.96 * sqrt(12^2 * 0.0311^2)`, `r 0.16 * 12 + 1.96 * sqrt(12^2 * 0.0311^2)`],[`r 12 *(0.16 - 0.03) - 1.96 * sqrt(12^2 * 0.0311^2)`, `r 12 *(0.16 - 0.03) + 1.96 * sqrt(12^2 * 0.0311^2)`] and  [`r 12 *(0.16 - 0.03 - 0.03) - 1.96 * sqrt(12^2 * 0.0311^2)`, `r 12 *(0.16 - 0.03 - 0.03) + 1.96 * sqrt(12^2 * 0.0311^2)`].
+
+
+Among children born to mothers with parity larger than 3, we estimate that the annual growth rate for ages 0 to 24 months, 24 to 48 months and > 48 months is `r (0.16 + 0.01) * 12` kg, `r 12 *(0.16 - 0.03 + 0.01 - 0.01) ` kg and `r 12 * (0.16- 0.03 - 0.03 + 0.01 - 0.01 -0)` kg, respectively, and that 95\% of children's annual growth rates will fall within [`r (0.16 + 0.01) * 12 - 1.96 * sqrt(12^2 * 0.0311^2)`, `r (0.16 + 0.01) * 12 + 1.96 * sqrt(12^2 * 0.0311^2)`],[`r 12 *(0.16 - 0.03 + 0.01 - 0.01) - 1.96 * sqrt(12^2 * 0.0311^2)`, `r 12 *(0.16 - 0.03 + 0.01 - 0.01) + 1.96 * sqrt(12^2 * 0.0311^2)`] and  [`r 12 * (0.16- 0.03 - 0.03 + 0.01 - 0.01 - 0) - 1.96 * sqrt(12^2 * 0.0311^2)`, `r 12 * (0.16- 0.03 - 0.03 + 0.01 - 0.01 - 0) + 1.96 * sqrt(12^2 * 0.0311^2)`].
+
+#### Summary
+
+Based on the data from the longitudinal study, there is no evidence that the growth rates of children differ by mother’s parity. There is variation in weights among 6-month old Nepali children as well as annual growth rates. 

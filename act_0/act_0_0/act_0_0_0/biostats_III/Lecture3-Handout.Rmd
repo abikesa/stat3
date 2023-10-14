@@ -1,0 +1,289 @@
+---
+title: "Lecture 3"
+author: "Elizabeth Colantuoni and Jiawei Bai"
+date: "1/29/2021"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+# install.packages("tidyverse")
+# install.packages("ggplot2")
+# install.packages("splines")
+# install.packages("dplyr")
+# install.packages("RColorBrewer")
+# install.packages("GGally")
+library(RColorBrewer)
+library(ggplot2)
+library(splines)
+library(dplyr)
+library(GGally)
+library(gridExtra)
+```
+
+# I. Introduction
+
+In real estate, there are three principles: “location, location, location”.
+
+In data analysis (empirical science, generally), the corresponding principles are: “question, question, question”.
+
+In Lectures 3 and 4, we will look at two questions about Nepali children’s growth using the Nepal Children’s Anthropomety data kindly provided by Joanne Katz, Professor of International Health and her colleagues.
+
+The questions are:
+
+1. How does the population mean (i.e. average) arm circumference (AC) vary as a function of child’s age? Is the AC-age
+relationship the same for boys and girls?
+
+2. Among children of the same height, how does the population mean AC vary as a function of age and is the relationship the same for boys and girls?
+
+We will address Question 1 in Lecture 3 and Question 2 in Lecture 4.
+
+# II. The Data
+
+In this section, we will read in the data and perform some basic processing and data visualizations to prepare for the analysis.
+
+## A. Read in and look at the data
+
+```{r readindata}
+load("NepalAnthro.rdata")
+dim(nepal.anthro)
+```
+
+\newpage
+
+```{r header}
+head(nepal.anthro)
+```
+
+## B. Analysis sample  
+
+Extract the key variables we need for our analysis and only the first row of data for each child.  NOTE:  The data provides multiple observations over time for each child.  Initially, we will evaluate the first assessment (baseline) for each child.
+
+```{r subsetdata}
+d= nepal.anthro %>% select(.,age,sex,ht,wt,arm,num) %>% filter(.,num==1)
+d <- d[complete.cases(d),] # drop cases without one or more of these variables
+d <- d[order(d$age),-6] # Sort the data by age and drop "num"
+dim(d)
+head(d)
+```
+
+\newpage
+
+## C. Display key variables
+
+You should ALWAYS visualize your data.  One quick approach is to make pairwise scatterplots where you visualize the association between each pair of variables.
+
+The pairs plot (you find the ggplot version; see ggpairs) is a convenient way to see the pairwise scatterplots in the dataset.
+
+It is a good idea to include the Y and X variables, putting the Y variable last so the bottom row is the plot of Y against each individual X.
+
+```{r pairsplot}
+pairs(select(d,age,sex,ht,wt,arm),pch=".",main="Pairs Plot of Nepal Anthro Variables")
+```
+
+For Question 1, we will focus on AC and age.  Here we make a plot to take a closer look the relationship between these two variables.
+
+```{r closerplot,fig.height = 2.5, fig.width = 5, fig.align = "center",warning=FALSE}
+ggplot(d, aes(x = age, y = arm)) +
+    geom_jitter(alpha = 0.7) +
+    theme_bw() + 
+    scale_y_continuous(breaks=seq(8,18,2),limits=c(8,18)) +
+    scale_x_continuous(breaks=seq(0,60,6),limits=c(0,60)) +
+    labs(y = "Arm cirumference (in cm)", x = "Age (in months)")
+```
+
+**Q1: Describe the relationship between AC and age.**
+
+\vspace{1in}
+
+# III. Define, fit and interpret a linear spline model
+
+In this section, we will define the necessary variables for, fit and interpret a linear spline model to the relationship between population mean AC and age.
+
+## A. Define the spline terms for inclusion in model
+
+We will start with knots at 6, 12, 24, 36, 48 months and then drop unnecessary knot points (i.e. where allowing for a chane in slope is not necessary).
+
+```{r definesplines}
+d=mutate(d,
+agesp6=ifelse(age-6>0, age-6,0),
+agesp12=ifelse(age-12>0, age-12,0),
+agesp24=ifelse(age-24>0, age-24,0),
+agesp36=ifelse(age-36>0,age-36,0),
+agesp48=ifelse(age-48>0, age-48,0)
+)
+# check what predictors for linear splines look like
+pairs(select(d,age,agesp6,agesp12,agesp24,agesp36, agesp48),pch=".",
+main="Pairs Plot of Age Linear Spline Vars")
+```
+
+## Fit, interpret and visualize the linear spline regression model
+
+Include all the spline terms at once allowing for 5 slope changes over the 5 years of age, call this model Model 1.
+
+**Q2: Write down the mathematical representation for the model allowing for 5 slope changes over the 5 years of age.**
+
+\newpage
+
+```{r model1}
+cc=complete.cases(select(d,age,arm))
+d.cc=filter(d,cc)
+d.cc = arrange(d.cc,age)
+reg1<-lm(data=d.cc, arm~age+agesp6+agesp12+agesp24+agesp36+agesp48)
+summary.lm(reg1)
+```
+
+**Q3: Interpret the value of the intercept**
+
+\vspace{0.5in}
+
+
+**Q4: Interpret the coefficient for "age"**
+
+\vspace{0.5in}
+
+
+**Q5: Interpret the coefficient for "agesp6"**
+
+\vspace{0.5in}
+
+
+**Q6: What is the estimate of the population average, standard deviation and variance of AC among 12-month old children?**
+
+\vspace{1in}
+
+\newpage
+
+The figure below overlays the observed data with the estimated population mean AC at each age.
+
+```{r model1fit,fig.height = 2.5, fig.width = 5, fig.align = "center",warning=FALSE}
+ggplot(d.cc, aes(x = age, y = arm)) +
+  theme_bw() + 
+  geom_jitter(alpha = 0.7) +
+  geom_line(aes(x = age, y = reg1$fitted.values)) +
+  geom_smooth(span=0.3) +
+  scale_y_continuous(breaks=seq(8,18,2),limits=c(8,18)) +
+  scale_x_continuous(breaks=seq(0,60,6),limits=c(0,60)) +
+  labs(y = "Arm cirumference (in cm)", x = "Age (in months)")
+```
+
+**Q7: Do you think your Model 1 is a useful model?  Are there any trends in how the estimated population mean AC changes with age that you find unusual or unlikely?**
+
+\vspace{1cm}
+
+
+# IV. Fine-tuning the model
+
+Because there is little reason to think that mean AC goes down between ages 6 and 12 months and because there is little evidence in the data supporting changes in slope after 12 months, let’s fit a second model with only two slope changes at 6 and 12 months, then a third with only a break at 6 months.
+
+```{r models23}
+reg2<-lm(data=d.cc, arm~age+agesp6+agesp12)
+reg3<-lm(data=d.cc, arm~age+agesp6)
+summary.lm(reg2); summary.lm(reg3)
+```
+
+**Q8: Without doing a formal statistical test, consider the size and standard error of the estimate for "agesp12" and make a recommendation about the need to allow the AC vs. age relationship to vary comparing children 6 to 12 months of age to children over 12 months of age.**
+
+\vspace{1cm}
+
+Make a figure of the observed data and the 3 linear spline models.
+
+```{r model23fit,fig.height = 2.5, fig.width = 5, fig.align = "center",warning=FALSE}
+ggplot(d.cc, aes(x = age, y = arm)) + theme_bw() + 
+  geom_jitter(alpha = 0.7) +
+  geom_line(aes(x = age, y = reg1$fitted.values),color="black") +
+  geom_line(aes(x = age, y = reg2$fitted.values),color="red") +
+  geom_line(aes(x = age, y = reg3$fitted.values),color="blue") +
+  scale_y_continuous(breaks=seq(8,18,2),limits=c(8,18)) +
+  scale_x_continuous(breaks=seq(0,60,6),limits=c(0,60)) +
+  labs(y = "Arm cirumference (in cm)", x = "Age (in months)")
+```
+
+**Q9: How does the population mean AC vary as a function of child’s age?  Write an answer using the results of your favorite model among 1-3. Write in scientific terms, use units, be numerate. This is an exercise to put into your own words the results of a simple regression analysis.**
+
+\newpage
+
+# V. Does the AC vs. age relationship vary by gender?
+
+Now we want to explore whether the relationship between the population mean AC vs. age differs for males vs. females.
+
+## A. Visualize the question
+
+Start with a visualization:  plot the association between mean AC and age, separately for each gender.
+
+```{r boygirlplot,fig.height=2.5,fig.width=5,fig.align="center",warning=FALSE}
+d.cc$female=d.cc$sex-1
+d.cc$femaleFactor = factor(d.cc$female,levels=c(0,1),labels=c("Male","Female"))
+ggplot(d.cc,aes(x=age, y=arm, color=femaleFactor)) + 
+  theme_bw() + geom_jitter(alpha = 0.7) + 
+  geom_smooth() + 
+  scale_y_continuous(breaks=seq(8,18,2),limits=c(8,18)) +
+  scale_x_continuous(breaks=seq(0,60,6),limits=c(0,60)) +
+  labs(y = "Arm cirumference (in cm)", x = "Age (in months)")
+```
+
+**Q10: From your visualization, do you think the population mean AC vs. age relationship differs by gender?**
+
+\newpage
+
+## B. Fit Model 3, separately for each gender
+
+To numerically explore the question, we can fit Model 3 separately to the data for females and males.
+
+```{r sepreg}
+reg3.boy=lm(arm~age+agesp6,data=d.cc,subset=female==0)
+reg3.girl=lm(arm~age+agesp6,data=d.cc,subset=female==1)
+summary.lm(reg3.boy); summary.lm(reg3.girl)
+```
+
+**Q11: Based on the fit of the two models, do you think the hypothesis that the population mean AC vs. age relationship differs by gender is supported by the data?**
+
+## C. Interaction model 
+
+Instead of fitting a gender-specific model, we can fit a single model to address the question of interest.
+
+**Q12: Write out the mathematical model representing the hypothesis that the population mean AC vs. age relationship differs by gender, where the mean AC vs. age is given by a linear spline model with knot at 6-months of age.**
+
+\vspace{2in}
+
+
+
+To fit the model above, we will create interaction terms in the model to allow for a separate AC and age association for each gender, will allow us to define a hypothesis test(s) to determine if there are any differences by gender.
+
+```{r interaction}
+d.cc$int.female.age=d.cc$female*d.cc$age
+d.cc$int.female.agesp6=d.cc$female*d.cc$agesp6
+reg4=lm(data=d.cc,arm~female + age + agesp6 + int.female.age + int.female.agesp6)
+summary.lm(reg4)
+```
+
+\newpage
+
+## D. Visualize the model fit
+
+The figure below displays the estimated gender-specific relationship between the population mean AC and age.
+
+```{r interactionfit,fig.height=2.5,fig.width=5,fig.align="center",warning=FALSE}
+ggplot(d.cc,aes(x=age, y=arm, color=femaleFactor)) + 
+  geom_jitter(alpha = 0.7) + theme_bw() +
+  geom_line(aes(x= age, y = reg4$fitted.values, color=femaleFactor)) + 
+  scale_y_continuous(breaks=seq(8,18,2),limits=c(8,18)) +
+  scale_x_continuous(breaks=seq(0,60,6),limits=c(0,60)) +
+  labs(y = "Arm cirumference (in cm)", x = "Age (in months)")   
+```
+
+# VI. Summarize your findings
+
+**Q13 Based on your interaction model, express the following hypotheses with respect to coefficients from your regression model.**
+
+  + The rate of change in AC as a function of age differs by gender
+
+\vspace{0.5in}
+
+  + The mean AC as a function of age differs for male to female children.
+
+\vspace{0.5in}
+
+**Q14: Summarize your analyses to address the question: how does the population mean AC vary as a function of child’s age? Is the relationship between AC and age the same for boys and girls?  Write to a public health audience; no unnecessary statistical jargon; be numerate.**
+
+

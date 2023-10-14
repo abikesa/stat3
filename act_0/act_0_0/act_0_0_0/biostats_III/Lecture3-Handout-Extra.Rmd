@@ -1,0 +1,90 @@
+---
+title: "Lecture3-Extra"
+author: "Elizabeth Colantuoni"
+date: "2/2/2021"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+# install.packages("tidyverse")
+# install.packages("ggplot2")
+# install.packages("splines")
+# install.packages("dplyr")
+# install.packages("RColorBrewer")
+# install.packages("GGally")
+library(RColorBrewer)
+library(ggplot2)
+library(splines)
+library(dplyr)
+library(GGally)
+library(gridExtra)
+```
+
+In this "handout-extra" I wanted to briefly review a few concepts to be sure we are all on the same page.
+
+# 1. Population parameters vs. statistics
+
+We are evaluating the Nepali Children's Anthropometry study.  Define as the population of interest children who are in their third year of life, i.e. 25 to 36 month old children.
+
+Assume that the arm circumferences of children in this population follow a normal distribution with mean $\mu$ and variance $\sigma^2$.  Both $\mu$ and $\sigma^2$ are population parameters; scalars that describe features of the distribution of arm circumference in this population.
+
+In general, the populations of interest to us are too large to conduct a census from which we could compute the value of $\mu$ and $\sigma^2$.  Therefore, we estimate $\mu$ and $\sigma^2$ using a sample of size $n$ drawn from the population.  From the sample, we observe $Y_i$, the arm circumference for the $i^{th}$ child from the sample.  Based on the sample of size $n$, we can compute:
+
+$$\hat{\mu} = n^{-1} \displaystyle{\sum_{i=1}^n} Y_i$$
+
+$$\hat{\sigma}^2 = (n-1)^{-1} \displaystyle{\sum_{i=1}^n} (Y_i - \hat{\mu})^2$$
+
+$\hat{\mu}$ and $\hat{\sigma}^2$ are statistics which provide a point estimate for $\mu$ and $\sigma^2$.  
+
+Also, we know that $\hat{\mu}$ and $\hat{\sigma}^2$ depend on the particular sample of size $n$ we observe from the population and $n$.  Fixing $n$, we can imagine collecting all the possible values of $\hat{\mu}$ and $\hat{\sigma}^2$ from all the possible samples of size $n$ from the population.  The variance of these statistics is called the "statistical variance"; but we more often describe the standard deviation of these statistics called the "standard error".  
+
+Focusing on $\mu$, we know from 651-2, 
+
+$$Var(\hat{\mu}) = n^{-1} \sigma^2$$
+
+$$SE(\hat{\mu}) = \sqrt{n^{-1}\sigma^2}$$
+
+In any given sample of size $n$, we can estimate $SE(\hat{\mu})$ by plugging in our estimate of $\sigma^2$ from the sample.  We would refer to this value as $\hat{SE}(\hat{\mu}) = \sqrt{n^{-1}\hat{\sigma}^2}$.
+
+# 2. Link back to Lecture 3 Handout
+
+Let's pull all these ideas together within the context of a regression model. We will use our population of children within their 3rd year of life to **estimate**: 
+
+* the population mean arm circumference, $\mu$ 
+* the population standard deviation for arm circumference, $\sigma$
+* the standard error for the sample mean arm circumference, $SE(\hat{\mu})$
+
+We will do the estimation using simple calculations and show equivalence in a linear regression model.
+
+## Simple calculations
+
+```{r simplecalc}
+load("NepalAnthro.rdata")
+d= nepal.anthro %>% select(.,arm,age,num) %>% filter(.,num==1) %>% filter(.,age>=25 & age<=36)
+Y <- d[complete.cases(d),1] 
+# Estimate of mu
+mean(Y)
+# Estimate of sigma
+sqrt(var(Y))
+# Estimate of SE(mu-hat)
+sqrt(var(Y)/length(Y))
+```
+
+## Regression formulation
+
+Define the following regression model:
+
+$$Y_i = \mu + \epsilon_i, \epsilon_i~N(0,\sigma^2),Cov(\epsilon_i,\epsilon_j) = 0$$
+
+This regression model only includes an intercept.  We are defining that distribution of arm circumferences for our population follows a normal distribution with mean $\mu$ and variance $\sigma^2$.  
+
+Fit this model using "lm" and identify the estimates for the three quantities of interest; estimate of $\mu$, estimate of $\sigma$, estimate of $SE(\hat{\mu})$.  Compare the estimates you obtain from the regression model fit to those you computed by hand.
+
+See output on next page!
+
+\newpage
+
+```{r regression}
+summary(lm(Y~1))
+```

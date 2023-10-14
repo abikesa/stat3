@@ -1,0 +1,258 @@
+---
+title: "Lecture 13 Handout: Practice with linear mixed models"
+author: "Elizabeth Colantuoni"
+date: "3/8/2021"
+output: 
+  pdf_document:
+    keep_tex: true
+header-includes:
+    - \usepackage{mathrsfs}
+    - \usepackage{amsfonts}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+#install.packages("olsrr")
+library(kableExtra)
+library(RColorBrewer)
+library(tidyverse)
+library(splines)
+library(olsrr)
+library(nlme)
+library(lme4)
+library(gee)
+library(xtable)
+library(optimx)
+library(gridExtra)
+```
+
+# I. Objectives
+
+Upon completion of this session, you will be able to do the following: 
+
+* describe how longitudinal growth data is generated via subject specific growth rates
+
+* implement a linear mixed model in *R*
+
+* interpret key elements of linear mixed models applied to growth curves that are relevant for public health researchers
+
+In this lecture, we will quickly review the analysis of "NEPAL1" dataset and walk more slowly through a second analysis where the goal of each analysis is to:
+
+* Describe / estimate the monthly increase in weight as a function of age
+
+* Quantify variation in child specific growth patterns, i.e. variation in birthweights or variation in growth rates
+
+# II. Analysis of NEPAL1
+
+## A. Summary of Exploratory Analysis
+
+From the spaghetti plot below, we found:
+
+* On average, growth in weight is more steep at younger ages compared to older ages
+
+* There is variation in individual children's growth rates as noted by fanning out of and crossover of individual child trajectories
+
+   + The variation in growth rates is linked to the increasing variation in weights as children age
+
+```{r,fig.align="center",fig.height=2.5,fig.width=5}
+load("nepal_simulated.rda")
+ggplot(data = nepal1, aes(x = age, y = wt, group = factor(id))) +
+  geom_line() + theme_bw() + 
+  labs(y="Weight (in kg)",x="Age (in months)") + 
+  scale_y_continuous(breaks=seq(2,14,2),limits=c(1.5,14.5)) +
+  scale_x_continuous(breaks=seq(0,24,6),limits=c(0,24))
+```
+
+Next, we explored the correlation structure in the data by computing $Corr(r_{ij},r_{ik})$ where $r$ are residuals from a linear spline model assuming a single knot at 6 months of age.
+
+Based on the correlation matrix below, we noted stronger correlation between residuals that were measured closer in time compared to father apart in time.
+
+```{r,fig.align="center",fig.height=5,fig.width=5}
+## Here you need to get the set of residuals and then look at the correlation between residuals at the different follow-ups.
+nepal1$residuals = residuals(lm(wt~age+age_sp6,data=nepal1))
+nepal1_wide = nepal1 %>% select(id, fuvisit, residuals) %>% spread(fuvisit,residuals)
+cor(nepal1_wide[,-1])
+```
+
+Lastly, we explored the variance in the residuals and found that variance increases as a function of age; consistent with our observation from the spaghetti plot.
+
+```{r,fig.align="center",fig.height=2.5,fig.width=5}
+ggplot(nepal1,aes(x=age,y=residuals^2)) +
+    geom_point() + geom_smooth() + theme_bw() +
+    labs(y="Estimated variance",x="Age (in months)") + 
+    scale_y_continuous(breaks=seq(0,12,3),limits=c(0.5,12.5)) +
+  scale_x_continuous(breaks=seq(0,24,6),limits=c(0,24))  
+```
+
+## B. Fit and interpretation of linear mixed model
+
+We fit a random intercept and random slope for age model to the NEPAL1 dataset:
+
+$$Y_{ij} = (\beta_{0} + b_{0i}) + (\beta_{1}+b_{1i}) age_{ij} + \beta_{2}(age_{ij} - 6)^+ + e_{ij}$$
+
+where $e_{ij} \text{ iid } N(0,\sigma^2)$ and $b_i \sim MVN(0,D_{2\times2})$.
+
+$$D = \left[\begin{array}{cc}
+\tau^2_0 & \tau_{01}  \\
+\tau_{01} & \tau^2_1  \\
+\end{array}\right]$$
+
+```{r mixedmodel}
+load("nepal_simulated.rda")
+fit = lmer(wt~age+age_sp6+(1+age|id),data=nepal2)
+summary(fit)$coefficients
+summary(fit)$varcor
+est = fixef(fit)
+```
+
+1. What does $\beta_0$ represent? What does $b_{0i}$ represent?  What does $\tau^2_0$ represent?
+
+2. What does $\beta_1$ represent?  What does $b_{1i}$ represent? What does $\tau^2_1$ represent? 
+
+3. What does $\beta_1 + \beta_2$ represent?  How does the model define the child specific growth rate when children are over 6 months of age?
+
+4. What does $\sigma^2$ represent?  
+
+
+5. We compared the observed data to the predicted growth for children based on the random effects model.  How well do you think the model fits?
+
+```{r fittedplots}
+nepal1$fitted = fitted(fit)
+plot.data1 = ggplot(data = nepal1) + 
+  geom_line(aes(age,wt,group = id)) + 
+  xlab("Age (month)") + 
+  ylab("Weight (kg)") +
+  theme(legend.position='bottom', legend.box='horizontal')
+
+plot.slope1 = ggplot(data = nepal1) + 
+  geom_line(aes(age,fitted,group = id)) + 
+  xlab("Age (month)") + 
+  ylab("Weight (kg)") +
+  theme(legend.position='bottom', legend.box='horizontal')
+
+grid.arrange(plot.data1, plot.slope1, ncol=2)
+```
+
+# II. Example 2
+
+Now, you conduct a similar analysis for NEPAL2
+
+## A. Exploratory analysis
+
+### 1. Exploration of the mean model
+
+Below you will find a spaghetti plot of the NEPAL2 data. What do you notice about the data?  Can you describe some patterns you observe?
+
+```{r,fig.align="center",fig.height=2.5,fig.width=5}
+ggplot(data = nepal2, aes(x = age, y = wt, group = factor(id))) +
+  geom_line() + theme_bw() + 
+  labs(y="Weight (in kg)",x="Age (in months)") + 
+  scale_y_continuous(breaks=seq(2,14,2),limits=c(1.5,14.5)) +
+  scale_x_continuous(breaks=seq(0,24,6),limits=c(0,24))
+```
+
+### 2. Explore the correlation structure
+
+Next, explore the correlation structure in the data by computing $Corr(r_{ij},r_{ik})$ where $r$ are residuals from a linear spline model assuming a single knot at 6 months of age.
+
+```{r,fig.align="center",fig.height=5,fig.width=5}
+## Here you need to get the set of residuals and then look at the correlation between residuals at the different follow-ups.
+nepal2$residuals = residuals(lm(wt~age+age_sp6,data=nepal2))
+nepal2_wide = nepal2 %>% select(id, fuvisit, residuals) %>% spread(fuvisit,residuals)
+pairs(nepal2_wide[,-1])
+cor(nepal2_wide[,-1])
+```
+
+Can you look at the table of correlation estimates and provide a rough estimate for the autocorrelation function?
+
+### 3. Explore the variance structure
+
+In addition to understanding the correlation structure, we need understand if the variance in the residuals is the same at all ages or the variance of the residuals changes over age.
+
+```{r,fig.align="center",fig.height=2.5,fig.width=5}
+ggplot(nepal2,aes(x=age,y=residuals^2)) +
+    geom_point() + geom_smooth() + theme_bw() +
+    labs(y="Estimated variance",x="Age (in months)") + 
+    scale_y_continuous(breaks=seq(0,12,3),limits=c(0.5,12.5)) +
+  scale_x_continuous(breaks=seq(0,24,6),limits=c(0,24))  
+```
+
+### 4. Summary of the exploratory analysis
+
+From the exploratory analysis, can you specify a linear mixed model that you think is consistent with the data?
+
+## B. Fit and interpretation of linear mixed model
+
+Fit a random intercept model to the NEPAL2 dataset:
+
+$$Y_{ij} = (\beta_{0} + b_{0i}) + \beta_{1} age_{ij} + \beta_{2}(age_{ij} - 6)^+ + e_{ij}$$
+
+where $e_{ij} \text{ iid } N(0,\sigma^2)$ and $b_i \sim N(0,\tau^2_0)$.
+
+```{r mixedmodel2}
+fit = lmer(wt~age+age_sp6+(1|id),data=nepal2)
+summary(fit)$coefficients
+summary(fit)$varcor
+est = fixef(fit)
+```
+
+1. What does $\beta_0$ represent? What does $b_{0i}$ represent?  What does $\tau^2_0$ represent?
+
+2. What does $\beta_1$ represent?  Does our model allow the individual child growth rates to vary?
+
+3. What does $\beta_0 + 3\beta_1$ represent?
+
+4. Can you provide an interval that contains 95\% of weights for 3-month old children?
+
+5. What does $\beta_0 + 12 \beta_1 + (12-6) \beta_2$ represent?
+
+6. Can you provide an interval that contains 95\% of weights for 12-month old children?
+
+7. We compared the observed data to the predicted growth for children based on the random effects model.  How well do you think the model fits?
+
+```{r fittedplots2}
+nepal2$fitted = fitted(fit)
+plot.data2 = ggplot(data = nepal2) + 
+  geom_line(aes(age,wt,group = id)) + 
+  xlab("Age (month)") + 
+  ylab("Weight (kg)") +
+  theme(legend.position='bottom', legend.box='horizontal')
+
+plot.int2 = ggplot(data = nepal2) + 
+  geom_line(aes(age,fitted,group = id)) + 
+  xlab("Age (month)") + 
+  ylab("Weight (kg)") +
+  theme(legend.position='bottom', legend.box='horizontal')
+
+grid.arrange(plot.data2, plot.int2, ncol=2)
+```
+
+8. Try to add a random slope for age to your linear mixed model.  Does this work?  
+
+```{r try}
+fit.slope = lmer(wt~age+age_sp6+(1+age|id),data=nepal2)
+isSingular(fit.slope)
+```
+
+# III. Comparison of analyses
+
+For NEPAL1, we noted variation in growth rates across children, so we allowed our linear mixed model to include a random intercept plus a random slope for age.
+
+```{r interceptmodel}
+fit.int = lmer(wt~age+age_sp6+(1|id),data=nepal1)
+nepal1$fit.int = fitted(fit.int)
+plot.int1 = ggplot(data = nepal1) + 
+  geom_line(aes(age,fit.int,group = id)) + 
+  xlab("Age (month)") + 
+  ylab("Weight (kg)") +
+  theme(legend.position='bottom', legend.box='horizontal')
+
+grid.arrange(plot.data1, plot.slope1, plot.int1, ncol=3)
+```
+
+For Nepal2, we noted that the child's growth rates were similar!  We were not able to estimate the random slope for age variance (essentially estimated to be 0)!
+
+```{r nepal2}
+grid.arrange(plot.data2,plot.int2,ncol=2)
+```
+

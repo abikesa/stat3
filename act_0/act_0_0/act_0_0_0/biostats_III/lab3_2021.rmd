@@ -1,0 +1,136 @@
+---
+title: "140.653 Lab 3: Adjusted Variable Plot"
+author: "Erjia Cui & Elizabeth Colantuoni"
+output: html_document
+---
+
+```{r,message=FALSE,warning=FALSE}
+library(ggplot2)
+library(dplyr)
+```
+
+## 1. Adjusted variable plot
+
+In this section we show how to make an adjusted variable plot using the Nepali anthropometry data. Our goal is to visualize the relationship between arm circumference ($Y$) and age ($X$) after adjusting for height ($Z$).
+
+There are three steps to construct an adjusted variable plot
+
+1. Regress arm circumference on height and obtain the residuals $R(Y|Z)$.
+2. Regress age on height and obtain the residuals $R(X|Z)$.
+3. Plot $R(Y|Z)$ vs $R(X|Z)$.
+
+```{r}
+## Preprocess the dataset
+load("./../nepal.anthro.rdata")
+head(nepal.anthro)
+d <- nepal.anthro %>% select(names(.)[1:16]) %>% filter(.,num==1)
+cc <- complete.cases(select(d,age,arm))
+d.cc <- filter(d, cc)
+d.cc <- arrange(d.cc,age)
+```
+
+Fit the regression models and plot the residuals. Fit a line through the residuals to show the trend.
+
+```{r}
+d.cc$resid.arm <- lm(arm~ht,data=d.cc)$residuals
+d.cc$resid.age <- lm(age~ht,data=d.cc)$residuals
+resid.model <- lm(resid.arm~resid.age-1,data=d.cc)
+
+## plot the estimates
+ggplot(d.cc, aes(x=resid.age,y=resid.arm)) +
+  theme_bw() +
+  geom_jitter(alpha=0.7) +
+  geom_abline(intercept=0,slope=coef(resid.model), color="blue")
+```
+
+What conclusions can you make?
+
+## 2. Equivalence of adjusted variable regression and multiple linear regression.
+
+There are two ways to estimate the relationship between age and arm circumference adjusting for height:
+
+* Adjusted variable regression: "remove" height from arm circumference and age, then fit a regression model on the residuals.
+* Multiple linear regression: add height to the multiple linear regression as a covariate.
+
+```{r}
+print(coef(resid.model))
+
+mlr.model <- lm(arm~age+ht,data=d.cc)
+print(coef(mlr.model)["age"])
+```
+
+The coefficients are exactly the same. Why?
+
+### Sketch proof
+
+In adjusted variable regression
+$$Y = A_0 + A_1 Z + e_{zy}$$ 
+$$X = C_0 + C_1 Z +e_{zx}$$
+Then fit a line through the residuals without intercept (since the residuals are centered at 0)
+$$Y-(A_0+A_1Z)=B_1[X-(C_0+C_1Z)]+e$$
+Rearranging the terms gives
+$$Y = A_0 + B_1C_0 + B_1X + (A_1+B_1C_1)Z + e$$
+Rewrite the coefficients as $B_0=A_0+B_1C_0$, $B_2=A_1+B_1C_1$ and we have multiple linear regression model
+$$Y = B_0 + B_1 X + B_2 Z + e$$
+Hence adjusted variable regression and multiple linear regression give the same coefficient for $X$.
+
+**The equivalence only holds when the functions and adjustments are linear.**
+
+**This is only a sketch proof. You have to write down the analytical forms of residual to give a formal proof**
+
+## 3. What if we adjust for multiple covariates?
+
+Here we create an adjusted variable plot of arm circumference versus age, adjusting for height (ht), weight (wt) and sex. 
+
+```{r}
+d.cc$resid.arm <- lm(arm~ht+wt+sex,data=d.cc)$residuals
+d.cc$resid.age <- lm(age~ht+wt+sex,data=d.cc)$residuals
+resid.model <- lm(resid.arm~resid.age-1,data=d.cc)
+
+ggplot(d.cc, aes(x=resid.age,y=resid.arm)) +
+  theme_bw() +
+  geom_jitter(alpha=0.7) +
+  geom_abline(intercept=0,slope=coef(resid.model), color="blue")
+```
+
+
+```{r}
+# Slope of adjusted variable plot
+print(coef(resid.model))
+# Multiple linear regression
+mlr.model = lm(arm~age+ht+wt+sex,data=d.cc)
+print(coef(mlr.model)["age"])
+```
+
+What conclusions can you draw?
+
+## Exercise 1 
+
+Using the Nepali anthropometry data, create an adjusted variable plot of weight versus age, adjusting for height (ht).
+
+* Obtain the residuals of weight and age regressed on height.
+* Plot the residuals of weight against those of age.
+* Verify that adjusted variable estimate is equal to the MLR estimate. 
+
+## Exercise 2
+
+Use the observed age, weight (wt), height (ht), sex in the Nepali anthropometry data, simulate arm circumference value from different scenarios:
+
+1. ARM = 7.8 + 0 x age + 0.03 x female + 0.07 x ht + error, error iid N(0,0.93)
+2. ARM = 7.8 + 0.035 x age + 0.03 x female + 0.07 x ht + error, error iid N(0,0.93)
+3. ARM = 7.8 + 0.05 x age – 0.025 x (age – 6) x (age > 6) + 0.03 x female + 0.07 x ht + error
+
+Create an adjusted variable plot of arm circumference versus age, adjusting for height (ht) and sex.
+
+```{r}
+## scenario 1
+d.cc$arm.s1 <- 7.8 + 0.03*d.cc$sex + 0.07*d.cc$ht + rnorm(nrow(d.cc), 0, 0.93)
+## scenario 2
+d.cc$arm.s2 <- 7.8 + 0.035*d.cc$age + 0.03*d.cc$sex + 0.07*d.cc$ht + rnorm(nrow(d.cc), 0, 0.93)
+## scenario 3
+d.cc$arm.s3 <- 7.8 + 0.05*d.cc$age - 0.025*(d.cc$age-6)*(d.cc$age > 6) + 0.03*d.cc$sex + 0.07*d.cc$ht + rnorm(nrow(d.cc), 0, 0.93)
+```
+
+
+
+

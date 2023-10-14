@@ -1,0 +1,227 @@
+---
+title: "Lecture 4 Handout"
+author: "Elizabeth Colantuoni"
+date: "2/4/2021"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+# install.packages("tidyverse")
+# install.packages("ggplot2")
+# install.packages("splines")
+# install.packages("dplyr")
+# install.packages("RColorBrewer")
+# install.packages("GGally")
+library(RColorBrewer)
+library(ggplot2)
+library(splines)
+library(dplyr)
+library(GGally)
+library(gridExtra)
+```
+
+# I. Introduction
+
+In real estate, there are three principles: “location, location, location”.
+
+In data analysis (empirical science, generally), the corresponding principles are: “question, question, question”.
+
+In this lecture, we will look at two questions about Nepali children’s growth using the Nepal Children’s Anthropomety data kindly provided by Joanne Katz, Professor of International Health and her colleagues.
+
+The questions are:
+
+1. How does the population mean (i.e. average) arm circumference (AC) vary as a function of child’s age? Is the AC-age
+relationship the same for boys and girls?
+
+2. Among children of the same height, how does the population mean AC vary as a function of age and is the relationship the same for boys and girls?
+
+We will address Question 1 in Lecture 3 and Question 2 in Lecture 4.
+
+# II. The Data
+
+In this section, we will create the analysis dataset using
+similar steps as in Lecture 3.  We will focus our attention on arm circumference (AC), age, gender and height!
+
+```{r readindata}
+load(".\\NepalAnthro.rdata")
+d= nepal.anthro %>% select(., arm,age,sex,ht,num) %>% filter(.,num==1)
+```
+
+# Display key variables
+
+The pairs plot (you find the ggplot version; see ggpairs) is a convenient way to see the pairwise scatterplots in the dataset.
+
+It is a good idea to include the Y and X variables, putting the Y variable last so the bottom row is the plot of Y against each individual X.
+
+```{r pairsplot,fig.align="center",fig.height=5,fig.width=5,warning=FALSE}
+pairs(select(d,age,sex,ht,arm),pch=".",main="Pairs Plot of Nepal Anthro Variables")
+```
+
+**Q1: Describe the relationship between a) AC and age, b) AC and height, and c) age and height**
+
+\vspace{1in}
+
+
+# III. Using regression for adjustment
+
+The second question for our analysis is:  Among children of the same height, how does the population mean arm circumference vary as a function of age and is the relationship the same for boys and girls?
+
+How do we start to explore or visualize "among children of the same height"?
+
+## A. A simpler "adjustment" example
+
+Let's take a step back and think about a simpler adjustment to start:  Suppose the question was "among children of the same gender, how does the population average arm circumference vary as a function of age?".
+
+We have visualized this in Lecture 3:
+
+```{r fit4,fig.align="center",fig.height=2.5,fig.width=5,results="asis",warning=FALSE}
+cc=complete.cases(select(d,age,arm))
+d.cc=filter(d,cc) %>% 
+  mutate(female=sex-1,
+    agesp6=ifelse(age-6>0, age-6,0),
+    int.female.age=female*age, 
+    int.female.agesp6=female*agesp6,
+    femaleFactor = factor(female,levels=c(0,1),labels=c("Male","Female")))
+reg4=lm(data=d.cc,arm~female + age + agesp6 + int.female.age + int.female.agesp6)
+ggplot(d.cc,aes(x=age, y=arm, color=femaleFactor)) + 
+    geom_jitter(alpha = 0.7) + theme_bw() + 
+    geom_line(aes(x=age, y = reg4$fitted.values, 
+color=femaleFactor),linetype="dashed") + 
+  scale_y_continuous(breaks=seq(8,18,2),limits=c(8,18)) +
+  scale_x_continuous(breaks=seq(0,60,6),limits=c(0,60)) +
+  labs(y = "Arm cirumference (in cm)", x = "Age (in months)")
+```
+
+Each of the lines in the figure above represents the relationship between arm circumference and age "among children with the same gender".
+
+When we make "adjustment" we assume that the relationship between arm circumference and age is the same after "adjustment for gender"; that is, the slope or rate of change in arm circumference as a function of age is the same regardless of gender.
+
+How can we express this in the form of a model?
+
+$E(AC|age,female) = \beta_0 + \beta_1 female + \beta_2 age + \beta_3 (age - 6)^+$
+
+which we can decompose into:
+
+* Boys:  $E(AC|age,female=0) = \beta_0 + \beta_2 age + \beta_3 (age - 6)^+$
+
+* Girls: $E(AC|age,female=1) = (\beta_0 + \beta_1) + \beta_2 age + \beta_3 (age - 6)^+$
+
+Notice that in both models, the rate of change for the population mean AC as a function of age is the same for both gender.
+
+Notice that we are allowing the boys and girls to be different from each other in their mean AC; but the rate in which arm circumference changes with age is the same for both genders.
+
+## B. Back to our question
+
+Among children of the same height, how does the population mean AC vary as a function of age and is the relationship the same for boys and girls?
+
+### 1. Coarse adjustment
+
+How should we make the "adjustment" for height?
+
++ We could break height into quintiles?  or deciles?
+
+We do this below and compare the coefficients for *age* and *agesp6* unadjusted for height and adjusted for height using quintiles and deciles.
+
+```{r discreteadj}
+d.cc$break5 = cut(d.cc$ht,breaks=quantile(d.cc$ht,seq(0,1,0.2)),labels=seq(1,5))
+d.cc$break10 = cut(d.cc$ht,breaks=quantile(d.cc$ht,seq(0,1,0.1)),labels=seq(1,10))
+reg.noadj = lm(arm~age+agesp6,data=d.cc)
+reg.adj5 = lm(arm~age+agesp6+as.factor(break5),data=d.cc)
+reg.adj10 = lm(arm~age+agesp6+as.factor(break10),data=d.cc)
+summary(reg.noadj)$coeff;summary(reg.adj5)$coeff;summary(reg.adj10)$coeff
+```
+
+**Q2: How do the coefficients for age and agesp6 compare without and with adjustment for height?**
+  
+\vspace{1in}  
+  
+**Q3: Is there a way to make a more smooth adjustment for height?**
+  
+  
+\vspace{1in}  
+  
+### 3. Smooth adjustment
+
+Instead of using the coarse adjustment for height, we could include a smooth function of height.  We will try a natural spline (aka natural cubic spline) with 3 degrees of freedom.
+
+```{r smoothadj}
+reg.adjsmooth = lm(arm~age+agesp6+ns(ht,3),data=d.cc)
+summary(reg.adjsmooth)
+```  
+  
+**Q4: What do you conclude regarding the height-adjusted relationship between arm circumference and age?**
+
+\vspace{1in}
+
+
+## C. Visualization of "adjustment"
+
+How do we visualize the height-adjusted relationship between AC and age?
+
+We can construct the adjusted variable plot; i.e. we want to remove information about height from both arm circumference and age and then examine the relationship with what is left over!
+
+Steps for creating an Adjusted Variable Plot of Y on X1, “controlling for X2,…Xp"
+
+1. Regress Y on X2,…Xp, save residuals as R(Y|X2,…Xp)
+
+2. Regress X1 on X2,…Xp, save residuals as R(X1|X2,…Xp)
+
+3. Plot R(Y|X2,…Xp) vs R(X1|X2,…Xp)
+
+The plot you create in 3. represents the "adjusted" information between Y and X1.
+
+The figure below displays the height adjusted relationship between AC and age.
+
+```{r avp,fig.align="center",fig.height=2.5,fig.width=5,results="asis",warning=FALSE}
+d.cc$resid.arm = lm(arm~ns(ht,3),data=d.cc)$residuals
+d.cc$resid.age = lm(age~ns(ht,3),data=d.cc)$residuals
+ggplot(d.cc, aes(x = resid.age, y = resid.arm)) +
+    geom_jitter(alpha = 0.7) + theme_bw() + 
+    geom_smooth(method="gam",formula=y ~ splines::ns(x, 3)) + 
+    scale_y_continuous(breaks=seq(-4,4,2),limits=c(-4,4)) +
+    scale_x_continuous(breaks=seq(-20,20,10),limits=c(-20,20)) +
+    labs(y = "R(AC|HT)", x = "R(Age|HT)")
+```
+
+**Q5.  What patterns do you see from the adjusted variable plot?**
+
+\vspace{1in}
+
+**Q6.  Can you identify any challenges in interpreting the adjusted variable plot?**
+
+\vspace{1in}
+
+## D. Height-adjusted interaction model
+
+The second part of our original question is: is the height-adjusted relationship between arm circumference and age different for boys and girls?
+
+**Q7: Can you write out the regression model you want to fit?  Call this model the "Model Extended"**
+
+\vspace{1.5in}
+
+
+**Q8: What model do you want to compare "Model Extended" to to answer the question?**
+
+\vspace{1.5in}
+
+### 1. Fit adjusted interaction model
+
+Now fit the models you specified above:
+
+```{r adjustedinteraction}
+reg.adjsmoothint = lm(arm~female + age + agesp6 + 
+                        int.female.age +
+                        int.female.agesp6 +
+                        ns(ht,3),data=d.cc)
+summary(reg.adjsmooth)$coeff;summary(reg.adjsmoothint)$coeff
+```
+
+**Q9.  Do you think the data supports the hypothesis that the height adjusted relationship between the population mean AC and age differs for male and female children?** 
+
+\vspace{1in}
+
+## E.Summarize your findings!
+
+
+  

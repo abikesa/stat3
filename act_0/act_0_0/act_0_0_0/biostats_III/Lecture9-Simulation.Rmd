@@ -1,0 +1,62 @@
+---
+title: "Lecture9-Simulation"
+author: "Elizabeth Colantuoni"
+date: "2/23/2021"
+header-includes:
+   - \usepackage{undertilde}
+output: pdf_document
+---
+
+Simulation study to explore the impact of excluding a key variable.
+
+
+```{r sim,fig.height=3,fig.width=6,fig.align="center"}
+my.sim = function(n,b0,b1,b2,d0,d1){
+  x1 = rnorm(n)
+  x2 = d0 + d1*x1 + rnorm(n)
+  y = b0 + b1*x1 + b2*x2 + rnorm(n)
+  fit = lm(y~x1)
+  # Save the following:
+  # The true association parameter b1
+  # The estimate of b1 from the SLR, i.e. alpha1 in our notes
+  # The observed bias:  hat{alpha1} - b1
+  # The theoretical bias:  b2*d1
+  c(b1,fit$coeff[2],fit$coeff[2]-b1,b2*d1)
+}
+
+# Run the simulation a single time
+set.seed(87421)
+my.sim(100,1,0.2,0.5,0,0.5)
+
+# Run the simulation many times and look at the distribution of
+# observed bias
+set.seed(14352)
+output = NULL
+for(i in 1:1000) output = rbind(output,my.sim(100,1,0.2,0.5,0,0.5))
+dim(output)
+output = as.data.frame(output)
+names(output) = c("Truth","Estimate","ObservedBias","TheoreticalBias")
+head(output)
+par(mfrow=c(1,2),mar=c(4,4,1,1))
+hist(output$Estimate,main="",xlab="Estimate of b1");abline(v=output$Truth[1],col="red",lwd=2)
+hist(output$ObservedBias,main="",xlab=
+"Observed bias = estimate - b1");abline(v=output$TheoreticalBias[1],col="red",lwd=2)
+```
+
+We can consider a second example where the bias would be negative by allowing $X1$ and $X2$ to be negatively correlated.
+
+```{r sim2,fig.height=3,fig.width=6,fig.align="center"}
+# Run the simulation many times and look at the distribution of
+# observed bias
+set.seed(89320)
+output = NULL
+for(i in 1:1000) output = rbind(output,my.sim(100,1,0.2,0.5,0,-0.25))
+dim(output)
+output = as.data.frame(output)
+names(output) = c("Truth","Estimate","ObservedBias","TheoreticalBias")
+head(output)
+par(mfrow=c(1,2),mar=c(4,4,1,1))
+hist(output$Estimate,main="",xlab="Estimate of b1");abline(v=output$Truth[1],col="red",lwd=2)
+hist(output$ObservedBias,main="",xlab=
+"Observed bias = estimate - b1");abline(v=output$TheoreticalBias[1],col="red",lwd=2)
+```

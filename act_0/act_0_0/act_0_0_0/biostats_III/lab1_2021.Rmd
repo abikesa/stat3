@@ -1,0 +1,152 @@
+---
+title: "140.653 Lab 1"
+author: "Erjia Cui & Elizabeth Colantuoni"
+output: html_document
+---
+
+```{r,message=FALSE,warning=FALSE,eval=FALSE}
+install.packages("ggplot2")
+install.packages("splines")
+```
+
+
+```{r,message=FALSE,warning=FALSE}
+library(ggplot2)
+library(splines)
+```
+
+## Introduction to ggplot
+
+
+The "ggplot2" package, created by Hadley Wickham, offers a powerful graphics language for creating fancy and complex plots. ggplot2 is an implementation of "Grammars of Graphics" — a general scheme for data visualization which breaks up graphs into semantic components such as scales and layers.
+
+
+#### 1. The setup
+
+The distinctive feature of the ggplot2 framework is the way you make plots through **adding "layers"**. 
+
+First, you need to tell ggplot what dataset to use. This is done using the `ggplot(df)` function, where df is a dataframe that contains all features needed to make the plot. This is the most basic step. Unlike base graphics, ggplot doesn’t take vectors as arguments.Optionally you can add whatever aesthetics you want to apply to your ggplot (inside `aes()` argument) - i.e. x,y axis; color; size; shape.The aesthetics specified here will be inherited by all the geom layers you will add subsequently.
+
+* **Tips**: By default in the `aes()` argument, color, size and shape scale treat variables as continuous; In order for ggplot to recognize a discrete variable, we need to convert it to a factor.
+
+Here is an example using `diamonds` dataset provided in the ggplot2 package. The dataset contains 53940 rows and 10 variables. For illustration purpose we use a subset with 5000 randomly sampled rows.
+
+```{r}
+set.seed(122)
+subdiamond <- diamonds[sample(1:nrow(diamonds),5000,replace = F),]
+head(subdiamond)
+```
+
+#### 2. The complete themes
+
+ggplot2 has a couple of complete themes, such as `theme_bw()`, `theme_gray()`, `theme_light()`; see [here](https://ggplot2.tidyverse.org/reference/ggtheme.html) for details. For this lab we will use `theme_bw()` to make all the plots.
+
+#### 3. The layers
+
+The layers in ggplot2 are also called "geoms". Once the base setup is done, you can append the geoms **one on top of the other**. The [documentation](https://ggplot2.tidyverse.org/reference/) provides a compehensive list of all available geoms.
+
+Now we use the `ggplot()` function to make our first plot using the `subdiamond` dataframe. 
+
+```{r}
+ggplot(subdiamond, aes(x = carat, y = price)) +
+  theme_bw() +
+  geom_point()
+
+# jitter the points
+ggplot(subdiamond, aes(x = carat, y = price)) +
+  theme_bw() +
+  geom_jitter(alpha = 0.7)
+
+# add smoothing line (overall trend)
+ggplot(subdiamond, aes(x = carat, y = price)) +
+  theme_bw() +
+  geom_jitter(alpha = 0.7) +
+  geom_smooth()
+```
+
+**Write out one or two sentences describing the relationship between price and carat.**
+
+*Does this relationship depend on the cut of the diamond?*
+
+```{r}
+# add smoothing lines for each levels of cut
+ggplot(subdiamond, aes(x = carat, y = price, color = cut)) + 
+  theme_bw() +
+  geom_jitter(alpha = 0.7) +
+  geom_smooth()
+```
+
+**Summarize similarities and differences in the relationship between price and carat across the types of cuts.**
+
+#### 4. The labels
+
+You might want to add the plot's main title and perhaps change the X and Y axis titles. This can be accomplished using the `labs` layer. However, manipulating the size, color of the labels is the job of next section.
+
+```{r}
+ggplot(subdiamond, aes(x = carat, y = price)) +
+  theme_bw() +
+  geom_jitter(aes(colour = cut), alpha = 0.7) +
+  geom_smooth() +
+  labs(title = "Scatter plot", x = "Carat", y = "Price")
+```
+
+#### 5. The theme
+
+Adjusting the size of labels can be done using the `theme()` function by setting these components:  `plot.title`, `axis.text.x` and `axis.text.y`. They need to be specified inside the `element_text()`. If you want to remove any of them, set it to `element_blank()` and it will vanish entirely.
+
+Adjusting the legend title is a bit tricky. If your legend is that of a color attribute and it varies based in a factor, you need to set the name using `scale_color_discrete()`, where the color part belongs to the color attribute and the discrete because the legend is based on a factor variable.
+
+More details can be found [here](https://ggplot2.tidyverse.org/reference/theme.html).
+
+```{r}
+ggplot(subdiamond, aes(x = carat, y = price)) +
+  theme_bw() +
+  geom_jitter(aes(colour = cut), alpha = 0.7) +
+  geom_smooth() +
+  labs(title = "Scatter plot", x = "Carat", y = "Price") +
+  theme(plot.title = element_text(size = 20, face = "bold", hjust = 0.5), # horizontal justification
+                axis.text.x = element_text(size = 15), 
+                axis.text.y = element_text(size = 15),
+                axis.title.x = element_text(size = 25),
+                axis.title.y = element_text(size = 25)) + 
+  scale_color_discrete(name="Cut of diamonds")
+```
+
+* References:
+    + [ggplot2 cheatsheet](https://www.rstudio.com/wp-content/uploads/2015/03/ggplot2-cheatsheet.pdf)
+    + [Top 50 ggplot2 Visualizations](http://r-statistics.co/Top50-Ggplot2-Visualizations-MasterList-R-Code.html)
+    + [R Markdown cheatsheet](https://www.rstudio.com/wp-content/uploads/2015/02/rmarkdown-cheatsheet.pdf)
+
+## Exercise: HW1, Part I, Question 1
+
+Use only the first observation for each child and only those children with complete data on age, height and weight.
+
+```{r}
+# Generate the data you need
+load("./nepal.anthro.rdata") # load in the dataset
+dim(nepal.anthro) # dimension of the dataset
+head(nepal.anthro) # show first part of the dataset
+
+d1 <- nepal.anthro[nepal.anthro$num == 1, c("sex","wt","ht","age")] # select first observation for each child and desired variables
+d <- d1[complete.cases(d1),] # drop cases without one or more of these variables
+d <- d[order(d$age),]   # reorder the dataframe to increasing age for later plotting 
+```
+
+Plot weight against age as if for an international nutrition journal. 
+
+* Label the axes clearly and make sure that all observations can be seen. 
+
+* Jitter the data or use different levels of transparency as necessary. **Describe the relationship between weight and age.**
+
+* Use different colors for the plotting symbols for boys and girls. 
+
+* Add a smooth curve (e.g. 
+
+    + natural spline with ~ 3 degrees of freedom or 
+    
+    + loess with span = 0.5 or 
+    
+    + kernel smoother with bandwidth 20 months) to the plot to emphasize the relationship of the observed mean weight at each age without making a stronger parametric assumption (e.g. linearity). Familiarize yourself with how each of these smoothers works. 
+    
+* Now make the curves separately for boys and girls. **Describe the relationship between weight and age separately by gender.**
+

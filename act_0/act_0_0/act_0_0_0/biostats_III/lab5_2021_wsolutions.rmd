@@ -1,0 +1,237 @@
+---
+title: "140.653 Lab 5: Longitudinal Data Analysis"
+author: "Erjia Cui & Elizabeth Colantuoni"
+output: html_document
+---
+
+```{r,message=FALSE,warning=FALSE}
+library(tidyverse)
+library(ggplot2)
+library(dplyr)
+library(splines)
+library(png)
+library(knitr)
+load('./../nepal.anthro.rdata')
+nepal.anthro$age_sp6 <- ifelse(nepal.anthro$age>6,nepal.anthro$age-6,0)
+img1_path <- "./lab5-block.png"
+img1 <- readPNG(img1_path, native = TRUE, info = TRUE)
+img2_path <- "./lab5-working-cor.png"
+img2 <- readPNG(img2_path, native = TRUE, info = TRUE)
+```
+
+### Part 1. Exploratory analysis of longitudinal dataset (using nepal.anthro)
+
+The Nepal dataset contains measurement of 200 children, at 5 time points, spaced approximately 4 months apart (1000 observations in total). A longitudinal study refers to an investigation where participant outcomes and possibly treatments or exposures are collected at **multiple** follow-up times. For today's lab, we are not going to cover missing data and imputation methods. 
+
+**First 100 children**
+
+```{r,warning=FALSE}
+first100.dat <- nepal.anthro[nepal.anthro$id %in% unique(nepal.anthro$id)[1:100],c('id','sex','wt','arm','age','age_sp6','fuvisit')]
+head(first100.dat,10)
+
+## Block of repeated measurements
+first100.wide <- first100.dat[,c('id','arm','fuvisit')] %>% spread(fuvisit,arm)
+head(first100.wide) # row: subject; col: visit time
+
+## Correlation
+cor(first100.wide[,-1],use = 'pairwise.complete.obs')
+pairs(first100.wide[,-1],na.action = na.omit)
+
+```
+
+As we observed, there are 5 repeated measurements for each subject; Some assumptions in simple OLS are violated: 
+$$
+Y = X\beta + \epsilon,  \epsilon \sim N(\mathbf{0},\sigma^2 I_n)
+$$
+
+__Question: What key assumptions in OLS are violated when we have repeated measurement (longitudinal data)?__
+
+</br></br></br></br></br>
+
+* i.i.d. (independence): Within one subject (i.e. 120011), the measurements were correlated across time. 
+* Homoscedasticity: Variance might not be the same across different subjects ($\sigma_i^2$); Such variation might depend on age.
+* Next question: What's more realistic model to explore this type of dataset?
+
+__Key: Decompose into 3 parts__
+
+* 1. Model for mean (Spaghetti plot)
+* 2. Model for variance (Diagonal of Var-Cov matrix)
+* 3. Model for covariance (Off-diagonal)
+
+
+__Spaghetti plot: Model for mean__
+
+```{r,message=FALSE}
+ggplot(first100.dat,aes(x=age,y=arm,group = factor(id))) + 
+    geom_line() +
+    labs(x='Age (months)', y ='Arm (cm)') +
+    theme_classic()
+```
+
+Spaghetti plot is a method for visualizing the data, where each line represents a subject and each dot on the line represents an observation at a time. 
+
+We can explore different pattern based on what scientific question we'd like to answer. For example, we can explore gender difference by stratifying boys and girls: 
+
+```{r,message=FALSE,warning=FALSE}
+ggplot(first100.dat) + 
+    geom_line(aes(x=age,y=arm,group = factor(id),color = factor(sex))) +
+    geom_smooth(aes(x=age,y=arm,color = factor(sex))) + 
+    labs(x='Age (months)', y ='Arm (cm)') +
+    theme_classic() +
+    scale_color_discrete(name = 'Sex', labels = c('Male','Female'))
+```
+
+__Diagonal part: Model for variance__
+
+```{r}
+## OLS
+fit.lm <- lm(data = first100.dat,
+            arm ~ age + age_sp6)
+summary(fit.lm) # 39 obs were deleted
+
+head(model.matrix(fit.lm)) # model.matrix extracts the design matrix
+
+## plot: residual^2 against age
+plot.dat <- data.frame(residual= residuals(fit.lm),
+                      age = model.matrix(fit.lm)[,2])
+
+ggplot(plot.dat,aes(x=age,y=residual)) +
+    geom_point() +
+    geom_hline(yintercept=0,lty=2,colour = 'red') +
+    theme_classic()
+
+ggplot(plot.dat,aes(x=age,y=residual^2)) +
+    geom_point() +
+    geom_smooth() +
+    theme_classic()
+```
+
+Though not that obvious, the mean of squared residuals ($r_i^2$) is a function of age. Under the assumption of $E(\epsilon_i) = 0$ and $Var(\epsilon_i) = E(\epsilon_i^2) - [E(\epsilon_i)]^2$, variance of residuals is not constant (depend on age).
+
+__Off-diagonal: Model for covariance/autocorrelation__
+
+According to Wikipedia: "Autocorrelation, also known as serial correlation, is the correlation of a signal with a delayed copy of itself as a function of delay. Informally, it is the similarity between observations as a function of the time lag between them. The analysis of autocorrelation is a mathematical tool for finding repeating patterns, such as the presence of a periodic signal obscured by noise, or identifying the missing fundamental frequency in a signal."
+
+
+Autocorrelation can also be referred to as 'lagged correlation' or 'serial correlation', as it measures the relationship between a variable's current value and its past values. Its output ranges from [-1,1], where +1 represents a perfect positive correlation, while an autocorrelation of -1 represents a perfect negative correlation.
+
+
+* __Autocorrelation Function (ACF)__
+
+The coefficient of correlation between two values in a time series is called the autocorrelation function (ACF). For example, the ACF for a time series/repeated measurements is given by:
+$$
+Corr(y_t,y_{t-k}), k=1,2,...
+$$
+This value of __k__ is the time gap being considered and is called the __lag__. A lag 1 autocorrelation (i.e., k = 1 in the above) is the correlation between values that are one time period apart (i.e. $Corr(y_t,y_{t-1})$).
+
+
+__Example__
+
+We have observed in this data two phenomenon:  non-constant variance and correlation in the residuals.  Below we will use an iterative fitting procedure that accounts for the non-constant variance (maintains the incorrect independence assumption) when producing estimates of $\beta$ so that we can then evaluate the correlation in the residuals.  The procedure requires the following:
+
+1. Fit a OLS to the data, obtain the $\beta$ and residuals;
+2. Specify a model for $\sigma^2$ as a function of X;
+3. Update our estimates of $\beta$ based on a weighted regression accounting for our model for $\sigma^2$.
+
+After Step 3, we take the updated $\beta$, compute residuals and standardized residuals, then look at correlation/autocorrelation function for the standardized residuals.
+
+```{r}
+## autocorrelation for residuals
+dat <- nepal.anthro[!is.na(nepal.anthro$age) & !is.na(nepal.anthro$arm),]
+autocorr <- function(dat){
+    # fit linear spline with ols and wls using preliminary variances v0
+    l0 <- lm(arm ~ age + age_sp6, data = dat)
+    # pretend independence between observations but unequal variance (diagonal: sigma1^2, sigma2^2...)
+    v0 <- predict.glm(glm(l0$residuals^2 ~ ns(dat$age,3), family = Gamma(link="log")), type = "response")
+    l1 <- lm(arm ~ age + age_sp6, weights = 1/v0, data = dat) # weighted least square
+    
+    # compute residuals from updated beta
+    res <- l1$residuals
+    # get estimated variance of residuals by assuming it as a function of age
+    v <- predict.glm(glm(res^2 ~ ns(dat$age,3), family = Gamma(link="log")), type = "response")
+    # derive standardized residuals
+    res <- res/sqrt(v) 
+    
+    # autocorrelation
+    result <- cbind(dat[,c('id','fuvisit')],res)
+    result.wide <- result %>% spread(fuvisit,res)
+    colnames(result.wide) <- c('id',paste0('visit',0:4))
+    
+    cor(result.wide[,-1],use = 'pairwise.complete')
+}
+
+## autocorrelation matrix
+nepal.ac <- autocorr(dat)
+round(nepal.ac, 3)
+
+## autocorrelation function
+nepal.acf <- data.frame(lag = 0:4, acf = rep(NA, ncol(nepal.ac)))
+for(i in 1:(nrow(nepal.acf)-1)){
+    nepal.acf$acf[i] <- mean(diag(nepal.ac[1:(nrow(nepal.ac)-nepal.acf$lag[i]), (1+nepal.acf$lag[i]):ncol(nepal.ac)]))
+}
+nepal.acf$acf[5] <- nepal.ac[1, ncol(nepal.ac)]
+round(nepal.acf, 3)
+```
+
+Question: What can you observe from the autocorrelation matrix?
+
+Here, we briefly introduce a real-world scenario where simple linear regression doesn't work. Modeling approaches including General Estimating Equation (GEE) and Linear Mixed Model (LMM) are going to be covered in class.
+
+__General Framework for clustered/correlated data__
+
+```{r,echo=FALSE,out.width = "60%"}
+include_graphics(img1_path)
+```
+
+There are many different types of working correlation:
+
+```{r,echo=FALSE,out.width = "60%"}
+include_graphics(img2_path)
+```
+
+
+### Part 2. Displays for longitudinal data - wide vs long data format
+
+The data you collect may not be suitable for analysis (i.e. longitudinal) and require modification in some way. This process is known as "tidying". The goal is generally to get the data into a "tidy" format: one row per case, one column per field, and one cell per value.
+
+#### Long to wide
+
+To transform data from long to wide format, we will use the `spread()` command:
+
+`spread(data, key, value, fill = NA, convert = FALSE)`
+
+* data: The dataset to be modified (nepal.anthro)
+* key: The column you want to split apart (fuvisit)
+* value: The column you want to use to populate the new columns (arm; cell values)
+* fill: what to substitute if there are combinations that don’t exist (not a problem here)
+
+
+```{r}
+nepal.wide <- nepal.anthro[,c('id','arm','fuvisit')] %>% spread(fuvisit,arm)
+head(nepal.wide)
+```
+
+The wide format is easy to explore the pattern of each subject.
+
+#### Wide to long
+
+Suppose what we obtain is `nepal.wide` dataset. As we can see, the data isn't in a great shape for analysis. The visit time are in columns, which is fine for side-by-side eyeballing, but difficult for modeling. Thus, we'd want to transform it back to long format.
+
+To transform data from wide to long format, we will use the `gather()` command:
+
+`gather(data, key, value, ..., na.rm = FALSE, convert = FALSE)`
+
+* data: The dataset to be modified (nepal.anthro)
+* key: the name of the new "naming" variable (fuvisit)
+* value: the name of the new result variable (age)
+* na.rm: whether missing values are removed (this dataset doesn’t have any, so it isn’t a problem)
+
+```{r}
+nepal.long <- nepal.wide %>% gather(fuvisit,arm,-id) %>% arrange(id)
+head(nepal.long)
+
+## compare with original dataset
+nepal.anthro[,c('id','fuvisit','arm')] %>% head
+```
+
+

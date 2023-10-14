@@ -1,0 +1,604 @@
+---
+title: "Homework 2 Solution"
+output:
+  pdf_document:
+    df_print: paged
+---
+
+```{r}
+options(digits=2)
+library("knitr")
+library(dplyr)
+library(boot)
+library(ggplot2)
+opts_chunk$set(tidy=TRUE)
+set.seed(108)
+```
+
+## I. Matrix Representation of Multiple Linear Regression
+
+Use the following 5 observations to estimate the models below.
+
+$X:  1.0, 3.0, 5.0, 7.0, 9.0$
+$Y: -0.1, 2.9, 6.2, 7.3, 10.7$
+
+### 1.1 Write the simple linear regression model in matrix terms.
+
+The linear regression model can be represented as follows
+$$
+\mathbf{Y} = \mathbf{X}\mathbf{\beta} +\mathbf{\epsilon},   \mathbf{\epsilon}\sim N(0,\sigma^2 I)
+$$
+where $\mathbf{Y} = \left[
+\begin{array}{rrrrr}
+-0.1\\
+2.9\\
+6.2\\
+7.3\\
+10.7
+\end{array}
+\right]$, $\mathbf{X} = \left[
+\begin{array}{rrrrr}
+1.0 & 1.0\\
+1.0 &3.0\\
+1.0 &5.0\\
+1.0 &7.0\\
+1.0 &9.0
+\end{array}
+\right]$, 
+$\mathbf{\beta} = \left[
+\begin{array}{rr}
+\beta_0\\
+\beta_1
+\end{array}
+\right]$, 
+
+and $I$ is a $5 \times 5$ identity matrix.
+
+Based on the least squares calculations in matrix notiation, the following results are:
+
+$\mathbf{X}^\shortmid\mathbf{X} = \left[
+\begin{array}{cc}
+5 & 25\\
+25 & 165
+\end{array}
+\right]$, $(\mathbf{X}^\shortmid\mathbf{X})^{-1} = \frac{1}{165 \times 5 - 25^2} \left[
+\begin{array}{rr}
+165 & -25\\
+-25 & 5
+\end{array}
+\right]$, $\mathbf{X}^\shortmid\mathbf{Y} = \left[
+\begin{array}{r}
+27 \\
+187 
+\end{array}\right]$
+
+And the estimated coefficients are:
+
+$$
+\hat{\beta} = (\mathbf{X}^T\mathbf{X})^{-1}\mathbf{X}^TY = \left[
+\begin{array}{rr}
+-1.1\\
+1.3
+\end{array}
+\right]
+$$
+
+### 1.2 Write an R function that takes the vector Y and matrix X as input then calculates and returns each the following components:
+  * the least squares estimates of the regression coefficients;
+  * the variance-covariance matrix of the least squares estimates;
+  * the correlation between the two regression coefficients;
+  * the vector of predicted values $X(X'X)^{-1}X'Y = HY$;
+  * the vector of residuals $(I- X(X'X)^{-1}X')Y = (I-H)Y$. 
+
+```{r R function for problem 1.2}
+
+regression1.2 = function(Y, X){
+  n = length(Y)
+  # Create design matrix
+  Xmat = cbind(rep(1,n),X) 
+  # Solve for betas
+  beta_hat = solve(t(Xmat) %*% Xmat) %*% t(Xmat) %*% Y
+  # Compute the Hat matrix
+  H = Xmat %*% solve(t(Xmat)%*%Xmat) %*%t(Xmat)
+  # Get the predicted values
+  Y.pred = H%*%Y
+  # Compute the residuals
+  res = (diag(n)-H)%*%Y   
+  # Estimate sigma2
+  sigma2 = crossprod(res)/(n-ncol(Xmat))
+  # Compute the variance matrix for beta-hat
+  vcov.beta = as.numeric(sigma2)*solve(crossprod(Xmat)) 
+  # Compute the correlation for beta-hat
+  corr.beta = vcov.beta[1,2]/sqrt(vcov.beta[1,1]*vcov.beta[2,2])
+  
+  return(list(
+    beta.hat = beta_hat,
+    var_cov = vcov.beta,
+    corr.beta = corr.beta,
+    Y.pred = Y.pred,
+    resid = res
+  ))
+}
+```
+
+### 1.3 Using the R function from Question 2, verify your estimates of the simple linear regression intercept and slope computed in Question 1.  Using the standard error estimate for the simple linear regression model slope, construct a 95% confidence interval for the true slope. 
+
+```{r fitmodel}
+X=c(1,3,5,7,9)
+Y=c(-0.1, 2.9, 6.2, 7.3, 10.7)
+regression1.2(Y, X)
+```
+
+The 95% confidence interval for the slope is 
+$$
+\hat{\beta}_1\pm t_{0.975, n-2}\hat{se}(\hat{\beta}_1) = (1.3 \pm 3.182 * \sqrt{0.010}) = (0.976, 1.618)
+$$
+
+### 1.4	Suppose you have conducted a randomized controlled trial of an intervention (TRT = 1) vs. placebo (TRT = 0), where n1 and n0 patients received the intervention and placebo, respectively.  For each patient, you have measured a continuous outcome Y with the goal of comparing E(Y|TRT=1) to E(Y|TRT=0).  I ask that you fit the following linear regression model:
+$$
+Y_i = B_0 + B_1X_i + \epsilon_i,~ \epsilon_i ~i.i.d.N(0,\sigma^2), X_i = 1 \textrm{ if TRT = 1, }X_i = 0 \textrm{ if TRT = 0 } 
+$$
+Write out the model above using matrix notation and then using matrix calculations solve for B_0 and B_1.  HINT:  The estimate of the intercept should be the sample mean in the placebo arm and estimate of the slope should be the difference in the sample means comparing the intervention and control groups.  I.E.  you will show that the model above is the same as conducting a two-sample t-test, assuming the same variance in each group.
+
+Let   
+$$
+ \mathbf{Y} = \mathbf{X}B + \mathbf{\epsilon}
+$$
+where $\mathbf{Y} = \left[
+\begin{array}{rrrrr}
+Y_1\\
+\dots\\
+Y_{n_0}\\
+Y_{n_0+1}\\
+\dots\\
+Y_{n_1+n_0}
+\end{array}
+\right]$, $\mathbf{X} = \left[
+\begin{array}{rrrrr}
+1 & 0\\
+1 & \dots\\
+1 &0\\
+1 & 1\\
+1 & \dots\\
+1 & 1
+\end{array}
+\right]$, 
+$\mathbf{\beta} = \left[
+\begin{array}{rr}
+\beta_0\\
+\beta_1
+\end{array}
+\right]$.
+
+The least squares estimator of the coefficient is 
+$$
+\hat{\beta} = (\mathbf{X}^T\mathbf{X})^{-1}\mathbf{X}^TY = \left[
+\begin{array}{rrrrr}
+n_0 + n_1 & n_1\\
+n_1 & n_1
+\end{array}
+\right]^{-1}\left[
+\begin{array}{rr}
+\sum_{i=1}^{n_0}y^0_i + \sum_{i=1}^{n_1}y^1_i \\
+\sum_{i=1}^{n_1}y^1_i
+\end{array}
+\right] = \left[
+\begin{array}{rr}
+\bar{y}^0\\
+\bar{y}^{1} - \bar{y}^{0}
+\end{array}
+\right]
+$$
+Note that 
+$$
+(\mathbf{X}^T\mathbf{X})^{-1} = \frac{1}{n_0n_1}\left[
+\begin{array}{rrrrr}
+n_1 & -n_1\\
+-n_1 & n_0 + n_1
+\end{array}
+\right] = \left[
+\begin{array}{rrrrr}
+\frac{1}{n_0} & -\frac{1}{n_0}\\
+-\frac{1}{n_0} & \frac{1}{n_0} + \frac{1}{n_1}
+\end{array}
+\right]
+$$
+
+To test the following hypothesis
+$$
+H_0:B_1 = 0, ~H_1:B_1 \neq 0
+$$
+The test statistic is 
+$$
+T = \frac{\bar{y}^1 - \bar{y}^0}{\hat{\sigma}^2\sqrt{1/n_0 + 1 /n_1}}
+$$
+where 
+$$
+\hat{\sigma}^2 = [\sum_{i=1}^{n_0}(y_i^0 - \bar{y}^0)^2 + \sum_{i=1}^{n_1}(y_i^1 - \bar{y}^1)^2] / (n_0 + n_1 - 2)
+$$
+This is exactly the same as two-sample t-test under the assumption of the same variance in each group.
+
+
+### 1.5	Under the Gaussian multiple linear regression framework, write the log likelihood function for the regression coefficients and residual variance in matrix terms and derive the mle's for the regression coefficients. Derive their joint distribution as well as that of the predicted values and residuals. 
+
+Under the Gaussian multiple linear regression framework, we have $\mathbf{Y}-\mathbf{X}\mathbf{\beta}\sim N(0,\sigma^2 I)$.
+Then the log-likelihood is 
+$$
+l(\mathbf{\beta},\sigma^2) = -\frac{5}{2}\log(2\pi)-\log(\sigma)-\frac{1}{2}(\mathbf{Y}-\mathbf{X}\mathbf{\beta})'(\mathbf{Y}-\mathbf{X}\mathbf{\beta})/\sigma^2
+$$
+Set its first derivative equal zero, we have
+$$
+\mathbf{X}'(\mathbf{Y}-\mathbf{X}\mathbf{\beta})=0
+$$
+Then the mle of regression coefficient is $$\hat{\mathbf{\beta}} = (\mathbf{X}'\mathbf{X})^{-1}\mathbf{X}'\mathbf{Y}$$
+
+Since $\mathbf{Y}\sim N(\mathbf{X}\mathbf{\beta},\sigma^2 \mathbf{I})$, 
+then $$\hat{\mathbf{\beta}}=(\mathbf{X}'\mathbf{X})^{-1}\mathbf{X}'\mathbf{Y}\sim N((\mathbf{X}'\mathbf{X})^{-1}\mathbf{X}'\mathbf{X}\mathbf{\beta},((\mathbf{X}'\mathbf{X})^{-1}\mathbf{X}')\sigma^2 \mathbf{I}((\mathbf{X}'\mathbf{X})^{-1}\mathbf{X}')') = N((\mathbf{\beta},(\mathbf{X}'\mathbf{X})^{-1}\sigma^2).$$
+Then
+$$
+\hat{Y} = \mathbf{X}\mathbf{\beta}\sim N(\mathbf{X}\mathbf{\beta},\sigma^2\mathbf{X}(\mathbf{X}'\mathbf{X})^{-1}\mathbf{X}')$$
+$$
+\mathbf{R} = \mathbf{Y}-\hat{\mathbf{Y}} = (\mathbf{I}-\mathbf{X}(\mathbf{X}'\mathbf{X})^{-1}\mathbf{X}')\mathbf{Y} \sim N(\mathbf{0},\sigma^2(\mathbf{I}-\mathbf{X}(\mathbf{X}'\mathbf{X})^{-1}\mathbf{X}'))$$
+
+## II. Advanced Inferences for Linear Regression
+
+Use the NMES data set on persons 65 and above to address the question of whether men and women use roughly the same quantity of medical services at each age. That is, estimate the difference in average medical expenditures between men and women as a function of age.
+
+```{r}
+load("nmes.rdata")
+data.2=nmes[nmes$lastage>=65,]
+```
+
+
+### 2.1 Fit a MLR of expenditures on: 
+### age-65 + age_sp1 = (age- 75)+ + age_sp2=(age-85)+ + female (1-female; 0 - male) + female*( age-65 + age_sp1 + age_sp2). Write a short, scientific interpretation of the estimate (with confidence interval) for each of the coefficients in the model.
+
+```{r}
+data.2$agem65 = data.2$lastage - 65
+data.2$age_sp1 = ifelse(data.2$lastage>75, data.2$lastage-75, 0)
+data.2$age_sp2 = ifelse(data.2$lastage>85, data.2$lastage-85, 0)
+data.2$female = 1-data.2$male
+
+fit_2.1 = lm(totalexp ~ (agem65 + age_sp1 + age_sp2) * female, data=data.2)
+summary(fit_2.1)
+```
+
+## Interpretations of coefficients
+<code>(Intercept)</code>: The average medical expenditure for 65-year old males is estimated to be `r coefficients(fit_2.1)[1]` (confident interval (`r confint(fit_2.1)[1,1]`, `r confint(fit_2.1)[1,2]`)) dollars.
+
+<code>agem65</code>: The average difference in medical expenditures comparing two males who differ in age by 1 year but are 65 to 75 years of age is is estimated to be `r coefficients(fit_2.1)[2]` (confident interval (`r confint(fit_2.1)[2,1]`, `r confint(fit_2.1)[2,2]`)) dollars.
+
+<code>agesp1</code>: The difference in the average annual increase in medical expenditures comparing males 75 to 85 years of age to males under 75 years of age is estimated to be `r coefficients(fit_2.1)[3]` (confident interval (`r confint(fit_2.1)[3,1]`, `r confint(fit_2.1)[3,2]`)) dollars.
+
+<code>agesp2</code>: The difference in the average annual increase in medical expenditures comparing males over 85 years of age to males 75 to 85 years of age is estimated to be `r coefficients(fit_2.1)[4]` (confident interval (`r confint(fit_2.1)[4,1]`, `r confint(fit_2.1)[4,2]`)) dollars.
+
+<code>female</code>: The difference in average medical expenditures for a 65-year old female compared to a 65-year old male is  `r coefficients(fit_2.1)[5]` (confident interval (`r confint(fit_2.1)[5,1]`, `r confint(fit_2.1)[5,2]`)) dollars.
+
+<code>age65:female</code>: The difference in average annual increase in medical expenditures comparing females to males younger than 75 years of age is estimated to be `r coefficients(fit_2.1)[6]` (confident interval (`r confint(fit_2.1)[6,1]`, `r confint(fit_2.1)[6,2]`)) dollars.
+
+<code>agesp1:female</code>: The difference between the female and male __additional__ average annual increase in medical expenditures comparing persons 75 to 85 years of age compared to persons younger than 75 is estimated to be `r coefficients(fit_2.1)[7]` (confident interval (`r confint(fit_2.1)[7,1]`, `r confint(fit_2.1)[7,2]`)) dollars.
+
+<code>agesp2:female</code>: The difference between the female and male __additional__ average annual increase in medical expenditures comparing persons over 85 years of age compared to persons 75 to 85 years of age is estimated to be `r coefficients(fit_2.1)[8]` (confident interval (`r confint(fit_2.1)[8,1]`, `r confint(fit_2.1)[8,2]`)) dollars.
+
+### 2.2	Create a figure that displays the data and the predicted values from the fit of the MLR model from Question1. 
+
+```{r,fig.height=2.5,fig.width=5,fig.align="center",warning=FALSE}
+data.2$observed_y = data.2$totalexp / 1000
+data.2$predicted_y = fit_2.1$fitted.values / 1000
+data.2$femaleFactor = factor(data.2$female,levels=c(0,1),labels=c("Male","Female"))
+max_y = max(data.2$observed_y, data.2$predicted_y)
+min_y = min(data.2$observed_y, data.2$predicted_y)
+
+ggplot(data.2, aes(x = lastage, y = observed_y,color=femaleFactor)) +
+    geom_point(size=0.25) + 
+    geom_line(aes(x = lastage, y = predicted_y)) + 
+    theme_bw() + 
+    scale_y_continuous(breaks=seq(0,200,20),limits=c(0,200)) +
+    scale_x_continuous(breaks=seq(65,95,5),limits=c(65,95)) +
+    labs(y = "Expenditures (in $1000s)", x = "Age (in years)")
+```
+
+We can also zoom in on the plot to show the average medical expenditures for females and males.
+
+```{r,fig.height=2.5,fid.width=5,fig.align="center",warning=FALSE}
+ggplot(data.2, aes(x = lastage, y = observed_y,color=femaleFactor)) +
+    geom_point(size=0.25) + 
+    geom_line(aes(x = lastage, y = predicted_y)) + 
+    theme_bw() + 
+    scale_y_continuous(breaks=seq(0,15,5),limits=c(0,15)) +
+    scale_x_continuous(breaks=seq(65,95,5),limits=c(65,95)) +
+    labs(y = "Expenditures (in $1000s)", x = "Age (in years)")
+```
+
+
+### 2.3 Test the null hypothesis that mean expenditure is the same function of age for men and women. Use a likelihood ratio test performed by fitting a null and extended model and comparing the change in –2*log likelihood to the appropriate chi-square statistic. Now perform an F-test for the same null hypothesis. Write a sentence or two that summarizes what you learned about the relationship of medical expenditures to age from this test and the similarity/difference of the two tests.
+
+##### Likelihood ratio test
+The null hypothesis is that the mean expenditure is the same function fo age for men and women.  This null hypothesis translates to a null model that includes only the main effects for the age variables.  Let $L_0$ be the likelihood of the null model and $L_1$ be the likelihood of the full model, then 
+$$
+2\log L_1 - 2\log L_0 \sim \chi^2_{df_1-df_0},
+$$
+where $df_1$ is the number of explanatory variables (including intercept) in the full model and $df_0$ is the number of explanatory variables in the null model, where the models are nested (all variables in the null model also appear in the full model).
+
+##### F test
+Use $RSS_0$ and $RSS_1$ to denote the residual sum of squares of the null model and alternative model, respectively. Then the $F$ statistic is 
+$$
+F = \frac{(RSS_0-RSS_1)/(df_1-df_0)}{RSS_1/(n-df_1)}.
+$$
+
+
+```{r}
+fit_2.2_null=lm(totalexp ~ agem65 + age_sp1 + age_sp2, data=data.2)
+logLik.null=logLik(fit_2.2_null)
+logLik.null
+logLik.full=logLik(fit_2.1)
+logLik.full
+
+#compute test statistic
+Dev_2.2=as.numeric(2*logLik.full - 2*logLik.null)
+
+#compute Pr(X>D), 
+# where X is Chi-squared with 4 df
+pchisq(Dev_2.2, df=4, lower.tail=FALSE)
+
+#Compute residual sum of squares
+RSS0 = sum(residuals(fit_2.2_null)^2)
+RSS1 = sum(residuals(fit_2.1)^2)
+df_diff = fit_2.2_null$df.residual-fit_2.1$df.residual
+df_alt = fit_2.1$df.residual
+Fstat = ((RSS0-RSS1)/df_diff)/(RSS1/df_alt)
+pf(Fstat, df_diff, df_alt, lower.tail = FALSE)
+anova(fit_2.2_null,fit_2.1)
+```
+
+According to the likelihood ratio test and the F test, we do not have sufficient evidence to reject the null hypothesis that males and females have the same relationship between age and medical expenses, with $p_{\chi^2}=`r pchisq(Dev_2.2, df=4, lower.tail=FALSE)`$ and $p_F = `r pf(Fstat, df_diff, df_alt, lower.tail = FALSE)`$. Two tests give similar results.
+
+### 2.4 Using the model fit in Step 1 above, make a plot of the expected difference between women and men in expenditures as a function of age. Add a horizontal line at 0. Note this difference is a simple function of the estimated coefficients from the model.
+
+Based on this problem, the model we will fit is 
+$$
+Y = B_0 + B_1(age - 65) + B_2(age-75)^{+} + B_3(age-85)^{+} +
+B_4female + 
+$$
+$$
+B_5female(age - 65) + B_6female(age-75)^{+} + B_7female(age-85)^{+} + \epsilon
+$$
+Then, the difference in medical expenditures comparing females to males is:
+$$
+E[Y|female = 1] - E[Y|female=0] = B_4 + B_5(age - 65) + B_6(age - 75)^{+} + B_7(age - 85)^{+}
+$$
+```{r,fig.height=2.5,fig.width=5,fig.align="center"}
+age = seq(65,95)
+agesp1 = ifelse(age>=75,age-75,0)
+agesp2 = ifelse(age>=85,age-85,0)
+age65 = age-65
+AGE = rbind(rep(1,31),age65,agesp1,agesp2)
+expectDiff=t(AGE)%*%coefficients(fit_2.1)[5:8]
+V = vcov(fit_2.1)[5:8,5:8]
+V.big = t(AGE)%*%V%*%AGE
+var = diag(V.big)
+diffage = data.frame(age,
+          expectDiff = expectDiff/1000, 
+          std = sqrt(var), 
+          min = (expectDiff-1.96*sqrt(var))/1000, 
+          max =(expectDiff+1.96*sqrt(var))/1000)
+
+ggplot(diffage,aes(x = age,y = expectDiff)) + 
+    geom_line(data = diffage) + 
+    geom_hline(yintercept = 0,col = 'blue',data= diffage) + 
+    theme_bw() + 
+    scale_y_continuous(breaks=seq(-1,4,1),limits=c(-1,5)) +
+    scale_x_continuous(breaks=seq(65,95,5),limits=c(65,95)) +
+    labs(y = "Difference (F - M, in $1000s)", x = "Age (in years)")
+# +geom_ribbon(aes(ymin=min,ymax =max),alpha =0.5,data= diffage)
+#conf =confint(fit_2.1)
+```
+
+You were not asked to do this but: in addition to the difference, it is also possible to add the 95% confidence interval for the curve, by adding the code `geom_ribbon(aes(ymin=min,ymax =max),alpha =0.5,data= diffage)`
+```{r,fig.height=2.5,fig.width=5,fig.align="center"}
+ggplot(diffage,aes(x = age,y = expectDiff)) +
+    geom_line(data = diffage) + 
+    geom_hline(yintercept = 0,col = 'blue',data= diffage) +
+    geom_ribbon(aes(ymin=min,ymax =max),alpha =0.5,data= diffage) +
+    theme_bw() + 
+    scale_y_continuous(breaks=seq(-3,12,1),limits=c(-3,12)) +
+    scale_x_continuous(breaks=seq(65,95,5),limits=c(65,95)) +
+    labs(y = "Difference (F - M, in $1000s)", x = "Age (in years)")
+```
+
+### 2.5 Use the appropriate linear combination of regression coefficients to calculate the estimated difference between women and men in average expenditures and its standard error at 65, 75 and 85 years of age. Complete the table below. (Hint: Start out by first expressing the average expenditure for males and females at 65, 75 and 85 in terms of the regression model, and determine what function of the regression coefficients gives you the difference at each age) .
+
+Let $X_i$ be the age of subject $i$ and $Z_i=1$ if subject $i$ is female and $0$ otherwise. The model can then be expressed as
+$$
+Y_i=\beta_0 + \beta_1(X_i-65) + \beta_2(X_i-75)^+ + \beta_3(X_i-85)^+ + \beta_4 Z_i + \beta_5 Z_i(X_i-65) + \beta_6 Z_i(X_i-75)^+ + \beta_7 Z_i(X_i-85)^+
+$$ 
+
+Then at age 65, the expected medical expenditures is $E[Y|65,\text{male}]=\beta_0$ for males and $E[Y|65,\text{female}]=\beta_0+\beta_4$ for females. Then the difference in medical expenditures between females and males is $\beta_4$.  
+
+At age 75, the expected medical expenditures is $E[Y|75,\text{male}]=\beta_0+10\beta_1$ for males and $E[Y|75,\text{female}]=\beta_0+\beta_4+10(\beta_1+\beta_5)$ for females. Then the difference between females and males age 75 is $\beta_4 + 10\beta_5$.
+
+At age 85, the expected medical expenditures is $E[Y|85,\text{male}]=\beta_0+20\beta_1 + 10\beta_2$ for males and $E[Y|85,\text{female}]=\beta_0+\beta_4+20(\beta_1+\beta_5) + 10(\beta_2+\beta_6)$ for females. Then the difference between females and males age 85 is $\beta_4 + 20\beta_5 + 10\beta_6$.
+
+To obtain the standard error of each linear combination, recall that $Var(aX+bY)=a^2Var(X)+b^2Var(Y)+2abCov(X,Y)$.
+
+```{r}
+#age 65
+diff65 = coefficients(fit_2.1)[5]/1000
+se65 = sqrt(vcov(fit_2.1)[5,5])/1000
+CI65 = diff65 + c(-1,1)*1.96*se65
+
+#age 75
+A = c(0,0,0,0,1,10,0,0)
+diff75 = as.numeric(t(A)%*% coefficients(fit_2.1))/1000
+se75 = sqrt(as.numeric(t(A)%*%vcov(fit_2.1)%*%A))/1000
+CI75 = diff75 + c(-1,1)*1.96*se75
+
+#age 85
+A = c(0,0,0,0,1,20,10,0)
+diff85 = as.numeric(t(A)%*%coefficients(fit_2.1))/1000
+se85 = sqrt(as.numeric(t(A)%*%vcov(fit_2.1)%*%A))/1000
+CI85 = diff85 + c(-1,1)*1.96*se85
+```
+
+The table below provides the estimated differences in $1000s comparing females to males at age 65, 75 and 85.
+
+\begin{center}
+\begin{tabular}{cccccc}
+ & Estimated Difference & Least Squares & Least Squares & Bootstrap & Bootstrap \\
+Age & Women-Men & Std Error & 95\% CI & Std Error & 95\% CI \\ \hline
+& & & & & \\
+65 & $`r diff65`$ & $`r se65`$ & $[`r CI65[1]`,`r CI65[2]`]$ &  & \\ 
+& & & & & \\
+75 & $`r diff75`$ & $`r se75`$ & $[`r CI75[1]`,`r CI75[2]`]$ &   & \\
+& & & & & \\
+85 & $`r diff85`$ & $`r se85`$ & $[`r CI85[1]`,`r CI85[2]`]$ &  & \\ 
+\end{tabular}
+\end{center}
+
+
+### 2.6 Now estimate the ratio of average expenditures comparing women to men at age 65. This is a non-linear function of the regression coefficients from step 1. Use the delta method to estimate the standard error of this statistic and make a 95% confidence interval for the true value given the model.
+
+```{r} 
+g.prime = matrix(
+  c(-coefficients(fit_2.1)[1]^(-2)*coefficients(fit_2.1)[5],
+    coefficients(fit_2.1)[1]^(-1)),nrow=2)
+se_ratio=sqrt(t(g.prime)%*%vcov(fit_2.1)[c(1,5),c(1,5)]%*%g.prime)
+```
+
+At age 65, the expected medical expenditures is $E[Y|65,\text{male}]=\beta_0$ for males and $E[Y|65,\text{female}]=\beta_0+\beta_4$ for females, and we would like to know the standard error and 95% CI of quantity $(\beta_0+\beta_4)/\beta_0$. Let function $$f(p,q)=(p+q)/p,$$ then the standard error of $f(\hat{\beta}_0,\hat{\beta}_4)$ could be written as
+
+$$\text{SE}_{\text{ratio}}=\sqrt{\nabla f(\hat{\beta}_0,\hat{\beta}_4)^T Cov(\hat{\beta}_0,\hat{\beta}_4) \nabla f(\hat{\beta}_0,\hat{\beta}_4)},$$
+
+where $\nabla f(\hat{\beta}_0,\hat{\beta}_4)^T=(-\hat{\beta}_4\hat{\beta}_0^{-2} \quad \hat{\beta}_0^{-1})$, $Cov(\hat{\beta}_0,\hat{\beta}_4)$ is the variance-covariance matrix of $\hat{\beta}_0$ and $\hat{\beta}_4$. Using R, we can know that $\text{SE}_{\text{ratio}}=`r se_ratio`$. And the 95% confidence interval of $(\beta_0+\beta_4)/\beta_0$ is $[(\hat{\beta}_0+\hat{\beta}_4)/\hat{\beta}_0-1.96*\text{SE}_{\text{ratio}},(\hat{\beta}_0+\hat{\beta}_4)/\hat{\beta}_0+1.96*\text{SE}_{\text{ratio}}]=[`r (coefficients(fit_2.1)[1]+coefficients(fit_2.1)[5])/coefficients(fit_2.1)[1]-1.96*se_ratio`,`r (coefficients(fit_2.1)[1]+coefficients(fit_2.1)[5])/coefficients(fit_2.1)[1]+1.96*se_ratio`]$.
+
+### 2.7 The data used in this regression are highly skewed and heteroscedastic (look up this term if it is the first time you have seen it). Hence, the assumptions of the linear regression are not consistent with the data. As you will learn shortly, the estimates are still unbiased, but the standard errors and confidence intervals are not. Hence, your inferences may be incorrect. To check, use the bootstrap to estimate the standard errors and confidence intervals for the differences in the table in part 5 and for ratio in part 6. Compare the results.
+
+Based on what we have learnt during the lab, it is convenient to use the `boot` function
+```{r}
+bt.est <- function(data, id){
+  dt <- data[id, ]
+  fit = lm(totalexp ~ (agem65 + age_sp1 + age_sp2) * female, dt)
+  cc = coefficients(fit)
+  c1 = cc[5]
+  c2 = cc[5] + 10 * cc[6]
+  c3 = cc[5] + 20 * cc[6] + 10 * cc[7]
+  c4 = (cc[1]+cc[5])/cc[1]
+  c(c1, c2, c3, c4)
+}
+
+result = boot(data.2, bt.est, 1000)
+```
+
+We can also use the help from `boot.ci` function with basic bootstrap
+```{r}
+boot.perc.ci <- sapply(1:4, function(x) boot.ci(result, index = x,type = "basic")$basic[4:5])
+boot.result <- data.frame(rbind(result$t0,boot.perc.ci,sqrt(apply(result$t,2,var)))/1000)
+
+rownames(boot.result) <- c("Est","Lower","Upper", "Standard Errors")
+colnames(boot.result) <- c('se65_bt','se75_bt','se85_bt', 'se65_ratio_bt')
+boot.result
+```
+
+The table below provides the estimated differences in $1000s comparing females to males at age 65, 75 and 85.  The confidence intervals are based on both the least squares solution and the bootstrap.
+
+We can learn from the table that the bootstrap standard errors and bootstrap 95% CI are close to their ordinary least squares counterparts when age = 65 or 75, but are larger and wider for age 85. For the ratio $(\beta_0+\beta_4)/\beta_0$, the bootstrap standard error is $`r boot.result[4,1]`$ and the bootstrap 95% CI is $[`r boot.result[2,1]`,`r boot.result[3,1]`]$, which are more precise than their ordinary least squares counterparts.
+
+\begin{center}
+\begin{tabular}{cccccc}
+ & Estimated Difference & Least Squares & Least Squares & Bootstrap & Bootstrap \\
+Age & Women-Men & Std Error & 95\% CI & Std Error & 95\% CI \\ \hline
+& & & & & \\
+65 & $`r diff65`$ & $`r se65`$ & $[`r CI65[1]`,`r CI65[2]`]$ & `r boot.result[4,1]` & [`r boot.result[2,1]`, `r boot.result[3,1]`] \\
+& & & & & \\
+75 & $`r diff75`$ & $`r se75`$ & $[`r CI75[1]`,`r CI75[2]`]$ & `r boot.result[4,2]` & [`r boot.result[2,2]`, `r boot.result[3,2]`] \\
+& & & & & \\
+85 & $`r diff85`$ & $`r se85`$ & $[`r CI85[1]`,`r CI85[2]`]$ & `r boot.result[4,3]` & [`r boot.result[2,3]`, `r boot.result[3,3]`] \\
+\end{tabular}
+\end{center}
+
+If you feel that it is not comfortable to use `boot` function, another choice is to write the bootstrap functions by yourself.
+
+```{r cache=TRUE}
+#bootstrap
+par_bootstrap = array(0,c(1000,length(coefficients(fit_2.1))))
+colnames(par_bootstrap) = names(coefficients(fit_2.1))
+for (k in 1:1000)
+{
+  idx_rd=sample(1:nrow(data.2),size=nrow(data.2),replace=TRUE)
+  data.2.4=data.2[idx_rd,]
+  data.2.4$agem65 = data.2.4$lastage - 65
+  data.2.4$age_sp1 = ifelse(data.2.4$lastage>75, data.2.4$lastage-75, 0)
+  data.2.4$age_sp2 = ifelse(data.2.4$lastage>85, data.2.4$lastage-85, 0)
+  data.2.4$female = 1-data.2.4$male
+  fit_2.4 = lm(totalexp ~ (agem65 + age_sp1 + age_sp2) * female, data=data.2.4)
+  par_bootstrap[k,]=coefficients(fit_2.4)
+}
+
+#age 65
+se65_bt = sd(par_bootstrap[,5])/1000
+CI65_bt = quantile(par_bootstrap[,5],probs=c(0.025,0.975))/1000
+
+#age 75
+se75_bt = sd(par_bootstrap[,5]+10*par_bootstrap[,6])/1000
+CI75_bt = quantile(par_bootstrap[,5]+10*par_bootstrap[,6],probs=c(0.025,0.975))/1000
+
+#age 85
+se85_bt = sd(par_bootstrap[,5]+20*par_bootstrap[,6]+10*par_bootstrap[,7])/1000
+CI85_bt = quantile(par_bootstrap[,5]+20*par_bootstrap[,6]+10*par_bootstrap[,7],probs=c(0.025,0.975))/1000
+
+#age 65 ratio
+se65_ratio_bt = sd((par_bootstrap[,1]+par_bootstrap[,5])/par_bootstrap[,1])/1000
+CI65_ratio_bt = quantile((par_bootstrap[,1]+par_bootstrap[,5])/par_bootstrap[,1],probs=c(0.025,0.975))/1000
+```
+
+Update the table in 2.5.
+
+\begin{center}
+\begin{tabular}{cccccc}
+ & Estimated Difference & Least Squares & Least Squares & Bootstrap & Bootstrap \\
+Age & Women-Men & Std Error & 95\% CI & Std Error & 95\% CI \\ \hline
+& & & & & \\
+65 & $`r diff65`$ & $`r se65`$ & $[`r CI65[1]`,`r CI65[2]`]$ & $`r se65_bt`$ & $[`r CI65_bt[1]`,`r CI65_bt[2]`]$ \\
+& & & & & \\
+75 & $`r diff75`$ & $`r se75`$ & $[`r CI75[1]`,`r CI75[2]`]$ & $`r se75_bt`$ & $[`r CI75_bt[1]`,`r CI75_bt[2]`]$ \\
+& & & & & \\
+85 & $`r diff85`$ & $`r se85`$ & $[`r CI85[1]`,`r CI85[2]`]$ & $`r se85_bt`$ & $[`r CI85_bt[1]`,`r CI85_bt[2]`]$ \\
+\end{tabular}
+\end{center}
+
+### 2.8 Using the results of 1-7, write a brief report with sections: objective, data, methods, results, summary as if for a health services journal.
+
+```{r,echo=FALSE}
+age_2.8=seq(65, 95) 
+agem65_2.8=age_2.8-65
+age_sp1_2.8=ifelse(age_2.8>75, age_2.8-75, 0)
+age_sp2_2.8=ifelse(age_2.8>85, age_2.8-85, 0)
+
+y_2.8=coefficients(fit_2.1)[5] + coefficients(fit_2.1)[6]*agem65_2.8 + coefficients(fit_2.1)[7]*age_sp1_2.8 + coefficients(fit_2.1)[8]*age_sp2_2.8
+
+UB_y_2.8 = y_2.8 + 1.96 * sqrt(var)
+LB_y_2.8 = y_2.8 - 1.96 *sqrt(var)
+
+for (l in 1:length(age_2.8)){
+  UB_y_2.8[l] = quantile(par_bootstrap[,5]+par_bootstrap[,6]*agem65_2.8[l]+par_bootstrap[,7]*age_sp1_2.8[l]+par_bootstrap[,8]*age_sp2_2.8[l],probs=0.975)
+  LB_y_2.8[l] = quantile(par_bootstrap[,5]+par_bootstrap[,6]*agem65_2.8[l]+par_bootstrap[,7]*age_sp1_2.8[l]+par_bootstrap[,8]*age_sp2_2.8[l],probs=0.025)
+}
+
+
+plot(age_2.8,y_2.8 / 1000,type="l",pch=16,main="Difference in average medical expenditures (female vs. male)",xlab="age",ylab="Medical Expense Difference(in $1000s)",lwd=2,ylim=range(c(expectDiff/1000,UB_y_2.8/1000,LB_y_2.8/1000)), yaxt = "n")
+axis(2, las = 2)
+points(age_2.8,UB_y_2.8 / 1000,type="l",lty="dashed",col=rgb(0.4,0.8,0.3,0.8),lwd=1.5)
+points(age_2.8,LB_y_2.8 / 1000,type="l",lty="dashed",col=rgb(0.4,0.8,0.3,0.8),lwd=1.5)
+abline(h=0,col=rgb(0.3,0.3,0.3,0.5))
+legend("topleft",legend=c("Medical Expense Difference","95% bootstraped pointwise confidence band"),col=c("black",rgb(0.4,0.8,0.3,0.8)),lwd=c(2,1.5),lty=c("solid","dashed"),bg ="transparent",cex=0.8,bty="n")
+```
+
+Objective: To determine whether older, i.e. at least 65 years of age, men and women of the same age use roughly the same quantity of medical services measured by their annual medical expenditures.
+
+Data:  Annual medical expenditures for men and women 65 to 95 years of age were obtained from the 1987 National Medical Expenditure Survey.
+
+Methods: The average annual medical expenditures were modeled as a non-linear function of age (via a linear spline with knots at 75 and 85 years of age) allowed to be distinct for each gender (via statistical interaction terms).  Using the fit of the linear regression model, the difference in the average annual medical expenditures comparing females to males ages 65 to 95 was computed.  Due to the positive skew in the distribution of annual medical expenditures, 95% confidence intervals for the differences were derived using the bootstrap method where 1000 bootstrap samples were drawn with replacement from the original sample and the percentile bootstrap method was used to compute the confidence interval.
+
+Results: Figure 1 displays the estimated average difference in annual medical expenditures comparing females to males 65 to 95 years of age.  Among 65 year olds, females have lower estimated average annual medical expenditures compared to males (estimated difference:  `r se65_bt` dollars, 95% bootstrap confidence interval:   `r CI65_bt[1]` to `r CI65_bt[2]`).  Among 75 year olds, the estimated difference in annual medical expenditures comparing females to males is `r se75_bt`  (95% bootstrap confidence interval: [`r CI75_bt[1]` to `r CI75_bt[2]`).  After age 75, females are estimated to have higher average annual medical expenditures compared to men of the same age; for example, among 85 year olds, the estimated difference is `r se85_bt` dollars (95% bootstrap confidence interval:  `r CI85_bt[1]` to `r CI85_bt[2]`) comparing females to males.  However, the observed differences at each age were not found to be not statistically significant (p-value 0.27 based on likelihood ratio test comparing the model described above to a model that assumed the average annual medical expenditures could change with age, via linear spline with knots at 75 and 85 years of age, but were not different among males and females of the same age).
+
+Summary: Based on data from the National Medical Expenditure Survey, we estimated that females have increasingly higher average annual medical expenditures as they age; however this difference did not reach statistical significance. 
